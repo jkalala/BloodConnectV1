@@ -1,0 +1,13 @@
+{
+  "auth": {
+    "loginSuccess": "Login realizado com sucesso",
+    "loginFailed": "Falha no login",
+    "checkCredentials": "Por favor, verifique suas credenciais e tente novamente",
+    "signInToContinue": "Entre para continuar para sua conta",
+    "signingIn": "Entrando...",
+    "noAccount": "Não tem uma conta?",
+    "registerNow": "Registre-se agora",
+    "everyDonationCounts": "Cada doação conta",
+    "donationImpact": "Sua doação pode salvar até três vidas. Junte-se à nossa comunidade de salvadores hoje."
+  }
+} 

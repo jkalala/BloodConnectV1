@@ -1,0 +1,13 @@
+{
+  "auth": {
+    "loginSuccess": "Login successful",
+    "loginFailed": "Login failed",
+    "checkCredentials": "Please check your credentials and try again",
+    "signInToContinue": "Sign in to continue to your account",
+    "signingIn": "Signing in...",
+    "noAccount": "Don't have an account?",
+    "registerNow": "Register now",
+    "everyDonationCounts": "Every donation counts",
+    "donationImpact": "Your donation can save up to three lives. Join our community of lifesavers today."
+  }
+} 
