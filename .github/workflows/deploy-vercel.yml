@@ -1,56 +1,40 @@
-name: Deploy Updates to Vercel
+name: Deploy to Vercel
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: BloodConnectv0
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
+          cache-dependency-path: BloodConnectv0/package-lock.json
 
-      - name: Get npm cache directory
-        id: npm-cache
-        shell: bash
-        run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
+      - name: Install Dependencies
+        run: npm ci
 
-      - name: Cache npm dependencies
-        uses: actions/cache@v3
-        with:
-          path: ${{ steps.npm-cache.outputs.dir }}
-          key: ${{ runner.os }}-node-${{ hashFiles('BloodConnectv0/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
-
-      - name: Install dependencies
-        working-directory: BloodConnectv0
-        run: |
-          npm ci
-          npm install -g vercel@latest
-
-      - name: Run tests
-        working-directory: BloodConnectv0
+      - name: Run Tests
         run: npm test
-        env:
-          CI: true
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
 
       - name: Deploy to Vercel
-        working-directory: BloodConnectv0
-        run: npx vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }} 
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel deploy --prod --token=$VERCEL_TOKEN 
