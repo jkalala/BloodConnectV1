@@ -24,13 +24,12 @@ jobs:
           cache-dependency-path: BloodConnectv0/package-lock.json
 
       - name: Install Dependencies
-        run: npm ci
+        run: |
+          npm install
+          npm install -g vercel@latest
 
       - name: Run Tests
         run: npm test
-
-      - name: Install Vercel CLI
-        run: npm install -g vercel@latest
 
       - name: Deploy to Vercel
         env:
