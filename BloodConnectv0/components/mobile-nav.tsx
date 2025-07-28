@@ -17,7 +17,8 @@ import {
   Activity,
   MessageSquare,
   Smartphone,
-  Globe
+  Globe,
+  Brain
 } from "lucide-react"
 
 export function MobileNav() {
@@ -34,6 +35,11 @@ export function MobileNav() {
       name: "Real-time Dashboard",
       href: "/real-time-dashboard",
       icon: Activity,
+    },
+    {
+      name: "Phase 3 Dashboard",
+      href: "/phase3-dashboard",
+      icon: Brain,
     },
     {
       name: "Map",
