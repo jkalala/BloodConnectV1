@@ -1,467 +1,899 @@
 "use server"
 
 import { getSupabase } from "./supabase"
-import { BloodRequestService } from "./blood-request-service"
-import { NotificationService } from "./notification-service"
 
 export interface USSDRequest {
   sessionId: string
-  serviceCode: string
   phoneNumber: string
+  serviceCode: string
   text: string
+  networkCode: string
 }
 
 export interface USSDResponse {
-  response: string
-  status: 'CON' | 'END'
+  sessionId: string
+  message: string
+  shouldClose: boolean
+}
+
+export interface USSDMenu {
+  id: string
+  title: string
+  options: USSDMenuItem[]
+}
+
+export interface USSDMenuItem {
+  key: string
+  text: string
+  action: string
+  nextMenu?: string
+}
+
+export interface USSDSessionData {
+  phoneNumber: string
+  networkCode: string
+  currentMenu: string
+  userData: Record<string, any>
+  step: number
+  bloodType?: string
+  patientName?: string
+  hospitalName?: string
+  unitsNeeded?: number
+  user?: any
+  requests?: any[]
 }
 
 export class USSDService {
   private supabase = getSupabase()
-  private bloodRequestService = new BloodRequestService()
-  private notificationService = new NotificationService()
+  private sessionData = new Map<string, USSDSessionData>()
 
-  constructor() {
-    // Initialize services
-  }
-
-  public async handleUSSDRequest(request: USSDRequest): Promise<USSDResponse> {
+  /**
+   * Handle USSD request and return appropriate response
+   */
+  async handleUSSDRequest(request: USSDRequest): Promise<USSDResponse> {
     try {
-      const { sessionId, serviceCode, phoneNumber, text } = request
+      const { sessionId, phoneNumber, serviceCode, text, networkCode } = request
       
-      // Parse the USSD text to determine the current menu level
+      // Parse the USSD text to determine current menu level
       const menuLevel = this.parseMenuLevel(text)
+      const userInput = this.getLastUserInput(text)
       
+      // Get or create session data
+      let sessionData = this.sessionData.get(sessionId) || {
+        phoneNumber,
+        networkCode,
+        currentMenu: 'main',
+        userData: {},
+        step: 0
+      }
+
+      // Handle based on menu level
       switch (menuLevel) {
         case 0:
-          return this.showMainMenu()
+          return this.showMainMenu(sessionId, sessionData)
+        
         case 1:
-          return this.handleMainMenuChoice(text, phoneNumber)
+          return this.handleMainMenuSelection(sessionId, sessionData, userInput)
+        
         case 2:
-          return this.handleBloodRequestMenu(text, phoneNumber)
+          return this.handleSubMenuSelection(sessionId, sessionData, userInput)
+        
         case 3:
-          return this.handleBloodTypeSelection(text, phoneNumber)
-        case 4:
-          return this.handleUrgencySelection(text, phoneNumber)
-        case 5:
-          return this.handleContactInfo(text, phoneNumber)
-        case 6:
-          return this.handleRequestConfirmation(text, phoneNumber)
-        case 7:
-          return this.handleDonorResponse(text, phoneNumber)
-        case 8:
-          return this.handleDonorMenu(text, phoneNumber)
+          return this.handleFormInput(sessionId, sessionData, userInput)
+        
         default:
-          return this.showError("Invalid selection. Please try again.")
+          return this.showErrorMenu(sessionId, sessionData)
       }
-    } catch (error) {
-      console.error('Error handling USSD request:', error)
-      return this.showError("An error occurred. Please try again.")
+    } catch (error: any) {
+      console.error('USSD request error:', error)
+      return {
+        sessionId: request.sessionId,
+        message: 'Sorry, an error occurred. Please try again.',
+        shouldClose: true
+      }
     }
   }
 
-  private parseMenuLevel(text: string): number {
-    if (!text || text === '') return 0
-    return text.split('*').length
-  }
+  /**
+   * Show main USSD menu
+   */
+  private showMainMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const menu = `
+BloodLink Africa
+================
 
-  private showMainMenu(): USSDResponse {
-    const menu = `BLOODLINK AFRICA
 1. Request Blood
-2. Respond to Request
+2. Donate Blood
 3. Check Status
 4. Emergency Alert
-5. Help
+5. My Profile
+6. Help
 
-Enter your choice:`
-    
+Reply with option number
+    `.trim()
+
+    sessionData.currentMenu = 'main'
+    sessionData.step = 0
+    this.sessionData.set(sessionId, sessionData)
+
     return {
-      response: menu,
-      status: 'CON'
+      sessionId,
+      message: menu,
+      shouldClose: false
     }
   }
 
-  private async handleMainMenuChoice(text: string, phoneNumber: string): Promise<USSDResponse> {
-    const choice = text.split('*')[0]
+  /**
+   * Handle main menu selection
+   */
+  private async handleMainMenuSelection(sessionId: string, sessionData: USSDSessionData, userInput: string): Promise<USSDResponse> {
+    const option = parseInt(userInput)
     
-    switch (choice) {
-      case '1':
-        return this.showBloodRequestMenu()
-      case '2':
-        return this.showDonorMenu()
-      case '3':
-        return await this.checkRequestStatus(phoneNumber)
-      case '4':
-        return this.showEmergencyAlert()
-      case '5':
-        return this.showHelp()
+    switch (option) {
+      case 1:
+        return this.showBloodRequestMenu(sessionId, sessionData)
+      
+      case 2:
+        return this.showDonateBloodMenu(sessionId, sessionData)
+      
+      case 3:
+        return this.showCheckStatusMenu(sessionId, sessionData)
+      
+      case 4:
+        return this.showEmergencyAlertMenu(sessionId, sessionData)
+      
+      case 5:
+        return this.showProfileMenu(sessionId, sessionData)
+      
+      case 6:
+        return this.showHelpMenu(sessionId, sessionData)
+      
       default:
-        return this.showError("Invalid choice. Please try again.")
+        return this.showInvalidOption(sessionId, sessionData)
     }
   }
 
-  private showBloodRequestMenu(): USSDResponse {
-    const menu = `BLOOD REQUEST
-1. Patient Name
-2. Hospital Name
-3. Blood Type
-4. Units Needed
-5. Urgency Level
-6. Contact Info
+  /**
+   * Show blood request menu
+   */
+  private showBloodRequestMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const menu = `
+Blood Request
+=============
 
-Enter your choice:`
-    
+1. A+ Blood
+2. A- Blood
+3. B+ Blood
+4. B- Blood
+5. AB+ Blood
+6. AB- Blood
+7. O+ Blood
+8. O- Blood
+
+Reply with blood type number
+    `.trim()
+
+    sessionData.currentMenu = 'blood_request'
+    sessionData.step = 1
+    this.sessionData.set(sessionId, sessionData)
+
     return {
-      response: menu,
-      status: 'CON'
+      sessionId,
+      message: menu,
+      shouldClose: false
     }
   }
 
-  private async handleBloodRequestMenu(text: string, phoneNumber: string): Promise<USSDResponse> {
-    const parts = text.split('*')
-    const choice = parts[1]
-    
-    switch (choice) {
-      case '1':
-        return {
-          response: "Enter patient name:",
-          status: 'CON'
-        }
-      case '2':
-        return {
-          response: "Enter hospital name:",
-          status: 'CON'
-        }
-      case '3':
-        return this.showBloodTypeMenu()
-      case '4':
-        return {
-          response: "Enter number of units needed (1-10):",
-          status: 'CON'
-        }
-      case '5':
-        return this.showUrgencyMenu()
-      case '6':
-        return {
-          response: "Enter contact name:",
-          status: 'CON'
-        }
-      default:
-        return this.showError("Invalid choice. Please try again.")
-    }
-  }
+  /**
+   * Show donate blood menu
+   */
+  private showDonateBloodMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const menu = `
+Donate Blood
+============
 
-  private showBloodTypeMenu(): USSDResponse {
-    const menu = `SELECT BLOOD TYPE
-1. A+
-2. A-
-3. B+
-4. B-
-5. AB+
-6. AB-
-7. O+
-8. O-
+1. Available to Donate
+2. Not Available
+3. Schedule Donation
+4. Check Eligibility
 
-Enter your choice:`
-    
+Reply with option number
+    `.trim()
+
+    sessionData.currentMenu = 'donate_blood'
+    sessionData.step = 1
+    this.sessionData.set(sessionId, sessionData)
+
     return {
-      response: menu,
-      status: 'CON'
+      sessionId,
+      message: menu,
+      shouldClose: false
     }
   }
 
-  private async handleBloodTypeSelection(text: string, phoneNumber: string): Promise<USSDResponse> {
-    const parts = text.split('*')
-    const choice = parts[2] || parts[1]
-    
-    const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
-    const selectedType = bloodTypes[parseInt(choice) - 1]
-    
-    if (!selectedType) {
-      return this.showError("Invalid blood type selection.")
-    }
-    
-    // Store the selection temporarily (in a real app, you'd use a session store)
-    return {
-      response: `Blood type selected: ${selectedType}\n\nEnter hospital name:`,
-      status: 'CON'
-    }
-  }
-
-  private showUrgencyMenu(): USSDResponse {
-    const menu = `SELECT URGENCY LEVEL
-1. Normal (24 hours)
-2. Urgent (6 hours)
-3. Critical (2 hours)
-
-Enter your choice:`
-    
-    return {
-      response: menu,
-      status: 'CON'
-    }
-  }
-
-  private async handleUrgencySelection(text: string, phoneNumber: string): Promise<USSDResponse> {
-    const parts = text.split('*')
-    const choice = parts[2] || parts[1]
-    
-    const urgencyLevels = ['normal', 'urgent', 'critical']
-    const selectedUrgency = urgencyLevels[parseInt(choice) - 1]
-    
-    if (!selectedUrgency) {
-      return this.showError("Invalid urgency selection.")
-    }
-    
-    return {
-      response: `Urgency level: ${selectedUrgency.toUpperCase()}\n\nEnter contact name:`,
-      status: 'CON'
-    }
-  }
-
-  private async handleContactInfo(text: string, phoneNumber: string): Promise<USSDResponse> {
-    const parts = text.split('*')
-    const contactName = parts[parts.length - 1]
-    
-    if (!contactName || contactName.length < 2) {
-      return this.showError("Please enter a valid contact name.")
-    }
-    
-    return {
-      response: `Contact: ${contactName}\nPhone: ${phoneNumber}\n\nEnter patient name:`,
-      status: 'CON'
-    }
-  }
-
-  private async handleRequestConfirmation(text: string, phoneNumber: string): Promise<USSDResponse> {
-    const parts = text.split('*')
-    const patientName = parts[parts.length - 1]
-    
-    if (!patientName || patientName.length < 2) {
-      return this.showError("Please enter a valid patient name.")
-    }
-    
-    // In a real implementation, you would collect all the data and create the request
-    // For now, we'll show a confirmation message
-    return {
-      response: `REQUEST CONFIRMED
-Patient: ${patientName}
-Contact: ${phoneNumber}
-Status: Processing
-
-Thank you for using BloodLink Africa. We will notify compatible donors immediately.`,
-      status: 'END'
-    }
-  }
-
-  private showDonorMenu(): USSDResponse {
-    const menu = `DONOR RESPONSE
-1. View Active Requests
-2. Accept Request
-3. Decline Request
-4. Check My Responses
-
-Enter your choice:`
-    
-    return {
-      response: menu,
-      status: 'CON'
-    }
-  }
-
-  private async handleDonorMenu(text: string, phoneNumber: string): Promise<USSDResponse> {
-    const parts = text.split('*')
-    const choice = parts[1]
-    
-    switch (choice) {
-      case '1':
-        return await this.showActiveRequests(phoneNumber)
-      case '2':
-        return {
-          response: "Enter request ID to accept:",
-          status: 'CON'
-        }
-      case '3':
-        return {
-          response: "Enter request ID to decline:",
-          status: 'CON'
-        }
-      case '4':
-        return await this.showMyResponses(phoneNumber)
-      default:
-        return this.showError("Invalid choice. Please try again.")
-    }
-  }
-
-  private async showActiveRequests(phoneNumber: string): Promise<USSDResponse> {
+  /**
+   * Show check status menu
+   */
+  private async showCheckStatusMenu(sessionId: string, sessionData: USSDSessionData): Promise<USSDResponse> {
     try {
-      const result = await this.bloodRequestService.getBloodRequests()
-      
-      if (!result.success || !result.data || result.data.length === 0) {
-        return {
-          response: "No active blood requests at the moment.",
-          status: 'END'
-        }
-      }
-      
-      let response = "ACTIVE REQUESTS:\n\n"
-      result.data.slice(0, 5).forEach((request, index) => {
-        response += `${index + 1}. ${request.blood_type} - ${request.hospital_name}\n`
-        response += `   Urgency: ${request.urgency.toUpperCase()}\n`
-        response += `   ID: ${request.id.slice(0, 8)}\n\n`
-      })
-      
-      response += "To respond, select 2 or 3 from main menu."
-      
-      return {
-        response,
-        status: 'END'
-      }
-    } catch (error) {
-      console.error('Error fetching active requests:', error)
-      return this.showError("Failed to load active requests.")
-    }
-  }
-
-  private async handleDonorResponse(text: string, phoneNumber: string): Promise<USSDResponse> {
-    const parts = text.split('*')
-    const requestId = parts[parts.length - 1]
-    
-    if (!requestId || requestId.length < 8) {
-      return this.showError("Please enter a valid request ID.")
-    }
-    
-    // In a real implementation, you would validate the request ID and process the response
-    return {
-      response: `Response recorded for request ${requestId.slice(0, 8)}.\n\nThank you for your response!`,
-      status: 'END'
-    }
-  }
-
-  private async showMyResponses(phoneNumber: string): Promise<USSDResponse> {
-    try {
-      // Get user by phone number
-      const { data: user } = await this.supabase
-        .from('users')
-        .select('id')
-        .eq('phone', phoneNumber)
-        .single()
-      
-      if (!user) {
-        return {
-          response: "User not found. Please register first.",
-          status: 'END'
-        }
-      }
-      
-      // Get user's responses
-      const { data: responses } = await this.supabase
-        .from('donor_responses')
-        .select('*')
-        .eq('donor_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(5)
-      
-      if (!responses || responses.length === 0) {
-        return {
-          response: "You haven't responded to any requests yet.",
-          status: 'END'
-        }
-      }
-      
-      let response = "YOUR RESPONSES:\n\n"
-      responses.forEach((resp: any, index: number) => {
-        response += `${index + 1}. ${resp.response_type.toUpperCase()}\n`
-        response += `   Request: ${resp.request_id.slice(0, 8)}\n`
-        response += `   Date: ${new Date(resp.created_at).toLocaleDateString()}\n\n`
-      })
-      
-      return {
-        response,
-        status: 'END'
-      }
-    } catch (error) {
-      console.error('Error fetching responses:', error)
-      return this.showError("Failed to load your responses.")
-    }
-  }
-
-  private async checkRequestStatus(phoneNumber: string): Promise<USSDResponse> {
-    try {
-      // Get user's blood requests
+      // Get user's recent requests
       const { data: requests } = await this.supabase
         .from('blood_requests')
         .select('*')
-        .eq('contact_phone', phoneNumber)
+        .eq('contact_phone', sessionData.phoneNumber)
         .order('created_at', { ascending: false })
-        .limit(3)
-      
+        .limit(5)
+
       if (!requests || requests.length === 0) {
         return {
-          response: "You haven't made any blood requests yet.",
-          status: 'END'
+          sessionId,
+          message: 'No blood requests found for this number.',
+          shouldClose: true
         }
       }
+
+      let menu = 'Recent Blood Requests\n==================\n\n'
       
-      let response = "YOUR REQUESTS:\n\n"
-      requests.forEach((req: any, index: number) => {
-        response += `${index + 1}. ${req.blood_type} - ${req.hospital_name}\n`
-        response += `   Status: ${req.status.toUpperCase()}\n`
-        response += `   Responses: ${req.response_count || 0}\n\n`
+      requests.forEach((request: any, index: number) => {
+        const status = request.status === 'completed' ? 'COMPLETED' : 
+                      request.status === 'in_progress' ? 'IN PROGRESS' : 'PENDING'
+        const date = new Date(request.created_at).toLocaleDateString()
+        
+        menu += `${index + 1}. ${request.blood_type} - ${status}\n   Date: ${date}\n\n`
       })
-      
+
+      menu += 'Reply with request number for details'
+
+      sessionData.currentMenu = 'check_status'
+      sessionData.requests = requests
+      this.sessionData.set(sessionId, sessionData)
+
       return {
-        response,
-        status: 'END'
+        sessionId,
+        message: menu,
+        shouldClose: false
       }
-    } catch (error) {
-      console.error('Error checking request status:', error)
-      return this.showError("Failed to check request status.")
+    } catch (error: any) {
+      console.error('Error checking status:', error)
+      return {
+        sessionId,
+        message: 'Error retrieving status. Please try again.',
+        shouldClose: true
+      }
     }
   }
 
-  private showEmergencyAlert(): USSDResponse {
+  /**
+   * Show emergency alert menu
+   */
+  private showEmergencyAlertMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const menu = `
+Emergency Alert
+===============
+
+1. Critical Blood Need
+2. Natural Disaster
+3. Mass Casualty
+4. Hospital Emergency
+
+Reply with emergency type
+    `.trim()
+
+    sessionData.currentMenu = 'emergency_alert'
+    sessionData.step = 1
+    this.sessionData.set(sessionId, sessionData)
+
     return {
-      response: `EMERGENCY ALERT
-For immediate assistance, call:
-+1234567890
-
-Or visit the nearest hospital emergency room.
-
-Stay safe!`,
-      status: 'END'
+      sessionId,
+      message: menu,
+      shouldClose: false
     }
   }
 
-  private showHelp(): USSDResponse {
-    return {
-      response: `BLOODLINK AFRICA HELP
+  /**
+   * Show profile menu
+   */
+  private async showProfileMenu(sessionId: string, sessionData: USSDSessionData): Promise<USSDResponse> {
+    try {
+      // Get user profile
+      const { data: user } = await this.supabase
+        .from('users')
+        .select('*')
+        .eq('phone', sessionData.phoneNumber)
+        .single()
 
-1. Request Blood - Submit a blood request
-2. Respond to Request - Accept/decline donor requests
-3. Check Status - View your request status
-4. Emergency Alert - Get emergency contact info
-5. Help - Show this help message
+      if (!user) {
+        return {
+          sessionId,
+          message: 'Profile not found. Please register first.',
+          shouldClose: true
+        }
+      }
 
-For support: +1234567890`,
-      status: 'END'
+      const menu = `
+My Profile
+==========
+
+Name: ${user.name}
+Blood Type: ${user.blood_type}
+Location: ${user.location}
+Status: ${user.available ? 'Available' : 'Not Available'}
+
+1. Update Status
+2. Change Location
+3. View History
+4. Back to Main Menu
+
+Reply with option number
+      `.trim()
+
+      sessionData.currentMenu = 'profile'
+      sessionData.user = user
+      this.sessionData.set(sessionId, sessionData)
+
+      return {
+        sessionId,
+        message: menu,
+        shouldClose: false
+      }
+    } catch (error: any) {
+      console.error('Error showing profile:', error)
+      return {
+        sessionId,
+        message: 'Error loading profile. Please try again.',
+        shouldClose: true
+      }
     }
   }
 
-  private showError(message: string): USSDResponse {
+  /**
+   * Show help menu
+   */
+  private showHelpMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const menu = `
+Help & Support
+==============
+
+1. How to Request Blood
+2. How to Donate Blood
+3. Emergency Procedures
+4. Contact Support
+5. Back to Main Menu
+
+Reply with option number
+    `.trim()
+
+    sessionData.currentMenu = 'help'
+    this.sessionData.set(sessionId, sessionData)
+
     return {
-      response: `ERROR: ${message}\n\nPress any key to continue.`,
-      status: 'CON'
+      sessionId,
+      message: menu,
+      shouldClose: false
+    }
+  }
+
+  /**
+   * Handle sub-menu selection
+   */
+  private async handleSubMenuSelection(sessionId: string, sessionData: USSDSessionData, userInput: string): Promise<USSDResponse> {
+    const { currentMenu } = sessionData
+
+    switch (currentMenu) {
+      case 'blood_request':
+        return this.handleBloodTypeSelection(sessionId, sessionData, userInput)
+      
+      case 'donate_blood':
+        return this.handleDonateBloodSelection(sessionId, sessionData, userInput)
+      
+      case 'emergency_alert':
+        return this.handleEmergencyAlertSelection(sessionId, sessionData, userInput)
+      
+      case 'profile':
+        return this.handleProfileSelection(sessionId, sessionData, userInput)
+      
+      case 'help':
+        return this.handleHelpSelection(sessionId, sessionData, userInput)
+      
+      default:
+        return this.showInvalidOption(sessionId, sessionData)
+    }
+  }
+
+  /**
+   * Handle blood type selection for request
+   */
+  private async handleBloodTypeSelection(sessionId: string, sessionData: USSDSessionData, userInput: string): Promise<USSDResponse> {
+    const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
+    const selectedIndex = parseInt(userInput) - 1
+
+    if (selectedIndex < 0 || selectedIndex >= bloodTypes.length) {
+      return this.showInvalidOption(sessionId, sessionData)
+    }
+
+    const bloodType = bloodTypes[selectedIndex]
+    sessionData.bloodType = bloodType
+    sessionData.step = 2
+
+    const menu = `
+Blood Type: ${bloodType}
+
+Enter patient name:
+    `.trim()
+
+    sessionData.currentMenu = 'blood_request_form'
+    this.sessionData.set(sessionId, sessionData)
+
+    return {
+      sessionId,
+      message: menu,
+      shouldClose: false
+    }
+  }
+
+  /**
+   * Handle donate blood selection
+   */
+  private async handleDonateBloodSelection(sessionId: string, sessionData: USSDSessionData, userInput: string): Promise<USSDResponse> {
+    const option = parseInt(userInput)
+
+    switch (option) {
+      case 1:
+        // Available to donate
+        return this.updateDonorStatus(sessionId, sessionData, true)
+      
+      case 2:
+        // Not available
+        return this.updateDonorStatus(sessionId, sessionData, false)
+      
+      case 3:
+        return this.showScheduleDonationMenu(sessionId, sessionData)
+      
+      case 4:
+        return this.showEligibilityCheck(sessionId, sessionData)
+      
+      default:
+        return this.showInvalidOption(sessionId, sessionData)
+    }
+  }
+
+  /**
+   * Update donor availability status
+   */
+  private async updateDonorStatus(sessionId: string, sessionData: USSDSessionData, available: boolean): Promise<USSDResponse> {
+    try {
+      const { error } = await this.supabase
+        .from('users')
+        .update({ available })
+        .eq('phone', sessionData.phoneNumber)
+
+      if (error) throw error
+
+      const status = available ? 'Available' : 'Not Available'
+      const message = `
+Status Updated
+==============
+
+You are now: ${status}
+
+Thank you for updating your status!
+      `.trim()
+
+      return {
+        sessionId,
+        message,
+        shouldClose: true
+      }
+    } catch (error: any) {
+      console.error('Error updating donor status:', error)
+      return {
+        sessionId,
+        message: 'Error updating status. Please try again.',
+        shouldClose: true
+      }
+    }
+  }
+
+  /**
+   * Handle form input
+   */
+  private async handleFormInput(sessionId: string, sessionData: USSDSessionData, userInput: string): Promise<USSDResponse> {
+    const { currentMenu } = sessionData
+
+    switch (currentMenu) {
+      case 'blood_request_form':
+        return this.handleBloodRequestForm(sessionId, sessionData, userInput)
+      
+      default:
+        return this.showInvalidOption(sessionId, sessionData)
+    }
+  }
+
+  /**
+   * Handle blood request form
+   */
+  private async handleBloodRequestForm(sessionId: string, sessionData: USSDSessionData, userInput: string): Promise<USSDResponse> {
+    const { step } = sessionData
+
+    switch (step) {
+      case 2:
+        // Patient name
+        sessionData.patientName = userInput
+        sessionData.step = 3
+        
+        const menu = `
+Patient Name: ${userInput}
+
+Enter hospital name:
+        `.trim()
+
+        sessionData.currentMenu = 'blood_request_form'
+        this.sessionData.set(sessionId, sessionData)
+
+        return {
+          sessionId,
+          message: menu,
+          shouldClose: false
+        }
+
+      case 3:
+        // Hospital name
+        sessionData.hospitalName = userInput
+        sessionData.step = 4
+        
+        const menu2 = `
+Hospital: ${userInput}
+
+Enter units needed (1-10):
+        `.trim()
+
+        sessionData.currentMenu = 'blood_request_form'
+        this.sessionData.set(sessionId, sessionData)
+
+        return {
+          sessionId,
+          message: menu2,
+          shouldClose: false
+        }
+
+      case 4:
+        // Units needed
+        const units = parseInt(userInput)
+        if (units < 1 || units > 10) {
+          return {
+            sessionId,
+            message: 'Please enter a number between 1 and 10.',
+            shouldClose: false
+          }
+        }
+
+        sessionData.unitsNeeded = units
+        return this.submitBloodRequest(sessionId, sessionData)
+
+      default:
+        return this.showInvalidOption(sessionId, sessionData)
+    }
+  }
+
+  /**
+   * Submit blood request
+   */
+  private async submitBloodRequest(sessionId: string, sessionData: USSDSessionData): Promise<USSDResponse> {
+    try {
+      const { bloodType, patientName, hospitalName, unitsNeeded, phoneNumber } = sessionData
+
+      const { data, error } = await this.supabase
+        .from('blood_requests')
+        .insert({
+          blood_type: bloodType,
+          patient_name: patientName,
+          hospital_name: hospitalName,
+          units_needed: unitsNeeded,
+          contact_phone: phoneNumber,
+          emergency_level: 'normal',
+          status: 'pending',
+          location: 'Unknown', // Will be updated when location is available
+        })
+        .select()
+
+      if (error) throw error
+
+      const requestId = data && data.length > 0 ? data[0].id : 'N/A'
+      
+      const message = `
+Blood Request Submitted
+======================
+
+Blood Type: ${bloodType}
+Patient: ${patientName}
+Hospital: ${hospitalName}
+Units: ${unitsNeeded}
+
+Request ID: ${requestId}
+
+We will notify you when donors are found.
+      `.trim()
+
+      return {
+        sessionId,
+        message,
+        shouldClose: true
+      }
+    } catch (error: any) {
+      console.error('Error submitting blood request:', error)
+      return {
+        sessionId,
+        message: 'Error submitting request. Please try again.',
+        shouldClose: true
+      }
+    }
+  }
+
+  /**
+   * Show invalid option message
+   */
+  private showInvalidOption(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    return {
+      sessionId,
+      message: 'Invalid option. Please try again.',
+      shouldClose: false
+    }
+  }
+
+  /**
+   * Show error menu
+   */
+  private showErrorMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    return {
+      sessionId,
+      message: 'An error occurred. Please try again.',
+      shouldClose: true
+    }
+  }
+
+  /**
+   * Parse menu level from USSD text
+   */
+  private parseMenuLevel(text: string): number {
+    if (!text) return 0
+    return text.split('*').length
+  }
+
+  /**
+   * Get last user input from USSD text
+   */
+  private getLastUserInput(text: string): string {
+    if (!text) return ''
+    const parts = text.split('*')
+    return parts[parts.length - 1]
+  }
+
+  /**
+   * Clean up session data
+   */
+  cleanupSession(sessionId: string): void {
+    this.sessionData.delete(sessionId)
+  }
+
+  /**
+   * Handle emergency alert selection
+   */
+  private handleEmergencyAlertSelection(sessionId: string, sessionData: USSDSessionData, userInput: string): USSDResponse {
+    const option = parseInt(userInput)
+    
+    switch (option) {
+      case 1:
+      case 2:
+      case 3:
+      case 4:
+        const emergencyTypes = ['Critical Blood Need', 'Natural Disaster', 'Mass Casualty', 'Hospital Emergency']
+        const selectedType = emergencyTypes[option - 1]
+        
+        const message = `
+Emergency Alert Sent
+===================
+
+Type: ${selectedType}
+Status: Processing
+
+Emergency services have been notified.
+        `.trim()
+        
+        return {
+          sessionId,
+          message,
+          shouldClose: true
+        }
+      
+      default:
+        return this.showInvalidOption(sessionId, sessionData)
+    }
+  }
+
+  /**
+   * Handle profile selection
+   */
+  private handleProfileSelection(sessionId: string, sessionData: USSDSessionData, userInput: string): USSDResponse {
+    const option = parseInt(userInput)
+    
+    switch (option) {
+      case 1:
+        return this.showUpdateStatusMenu(sessionId, sessionData)
+      case 2:
+        return this.showChangeLocationMenu(sessionId, sessionData)
+      case 3:
+        return this.showHistoryMenu(sessionId, sessionData)
+      case 4:
+        return this.showMainMenu(sessionId, sessionData)
+      default:
+        return this.showInvalidOption(sessionId, sessionData)
+    }
+  }
+
+  /**
+   * Handle help selection
+   */
+  private handleHelpSelection(sessionId: string, sessionData: USSDSessionData, userInput: string): USSDResponse {
+    const option = parseInt(userInput)
+    
+    switch (option) {
+      case 1:
+      case 2:
+      case 3:
+      case 4:
+        const helpTopics = [
+          'How to Request Blood',
+          'How to Donate Blood', 
+          'Emergency Procedures',
+          'Contact Support'
+        ]
+        const selectedTopic = helpTopics[option - 1]
+        
+        const message = `
+${selectedTopic}
+================
+
+For detailed information, please visit our website or contact support.
+        `.trim()
+        
+        return {
+          sessionId,
+          message,
+          shouldClose: true
+        }
+      
+      case 5:
+        return this.showMainMenu(sessionId, sessionData)
+      
+      default:
+        return this.showInvalidOption(sessionId, sessionData)
+    }
+  }
+
+  /**
+   * Show schedule donation menu
+   */
+  private showScheduleDonationMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const menu = `
+Schedule Donation
+=================
+
+1. Today
+2. Tomorrow
+3. This Week
+4. Next Week
+
+Reply with option number
+    `.trim()
+
+    sessionData.currentMenu = 'schedule_donation'
+    this.sessionData.set(sessionId, sessionData)
+
+    return {
+      sessionId,
+      message: menu,
+      shouldClose: false
+    }
+  }
+
+  /**
+   * Show eligibility check
+   */
+  private showEligibilityCheck(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const message = `
+Eligibility Check
+=================
+
+You are eligible to donate blood if:
+- Age 18-65 years
+- Weight > 50kg
+- No recent illness
+- No tattoos in last 6 months
+
+Contact nearest blood bank for full screening.
+    `.trim()
+
+    return {
+      sessionId,
+      message,
+      shouldClose: true
+    }
+  }
+
+  /**
+   * Show update status menu
+   */
+  private showUpdateStatusMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const menu = `
+Update Status
+=============
+
+1. Available to Donate
+2. Not Available
+3. Temporarily Unavailable
+
+Reply with option number
+    `.trim()
+
+    sessionData.currentMenu = 'update_status'
+    this.sessionData.set(sessionId, sessionData)
+
+    return {
+      sessionId,
+      message: menu,
+      shouldClose: false
+    }
+  }
+
+  /**
+   * Show change location menu
+   */
+  private showChangeLocationMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const menu = `
+Change Location
+===============
+
+Enter your new location:
+    `.trim()
+
+    sessionData.currentMenu = 'change_location'
+    this.sessionData.set(sessionId, sessionData)
+
+    return {
+      sessionId,
+      message: menu,
+      shouldClose: false
+    }
+  }
+
+  /**
+   * Show history menu
+   */
+  private showHistoryMenu(sessionId: string, sessionData: USSDSessionData): USSDResponse {
+    const message = `
+Donation History
+================
+
+Contact support for detailed history.
+    `.trim()
+
+    return {
+      sessionId,
+      message,
+      shouldClose: true
+    }
+  }
+
+  /**
+   * Get session statistics
+   */
+  getSessionStats(): { totalSessions: number; activeSessions: number } {
+    return {
+      totalSessions: this.sessionData.size,
+      activeSessions: this.sessionData.size
     }
   }
 }
 
-// Singleton instance
-let ussdService: USSDService | null = null
-
-export const getUSSDService = (): USSDService => {
-  if (!ussdService) {
-    ussdService = new USSDService()
-  }
-  return ussdService
-} 
+// Export singleton instance
+export const ussdService = new USSDService() 

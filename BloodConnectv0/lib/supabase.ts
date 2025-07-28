@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
-import type { Database } from "@/types/supabase"
+import type { Database } from "../types/supabase"
 
 // Create a single supabase client for the browser
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://lglquyksommwynrhmkvz.supabase.co"
