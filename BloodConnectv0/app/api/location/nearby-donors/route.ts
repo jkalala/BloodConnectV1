@@ -8,6 +8,7 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { handleError, createErrorResponse, ValidationError } from '@/lib/error-handling'
 import { performanceMonitor } from '@/lib/performance-monitoring'
 import { enhancedLocationService } from '@/lib/enhanced-location-service'
+import { requireAuth } from '@/lib/auth-middleware'
 import { z } from 'zod'
 
 const nearbyDonorsSchema = z.object({
@@ -22,6 +23,15 @@ export async function GET(request: NextRequest) {
   const tracker = performanceMonitor.startTracking('/api/location/nearby-donors', 'GET')
 
   try {
+    // Verify user authentication
+    const authResult = await requireAuth(request)
+    if (!authResult.success) {
+      return NextResponse.json(
+        { success: false, error: authResult.error },
+        { status: authResult.status }
+      )
+    }
+
     const supabase = createServerSupabaseClient()
     
     // Parse and validate query parameters
@@ -88,6 +98,15 @@ export async function POST(request: NextRequest) {
   const tracker = performanceMonitor.startTracking('/api/location/nearby-donors', 'POST')
 
   try {
+    // Verify user authentication
+    const authResult = await requireAuth(request)
+    if (!authResult.success) {
+      return NextResponse.json(
+        { success: false, error: authResult.error },
+        { status: authResult.status }
+      )
+    }
+
     const supabase = createServerSupabaseClient()
     
     // Parse request body

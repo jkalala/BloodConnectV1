@@ -185,14 +185,22 @@ export class PushNotificationService {
     try {
       const options: NotificationOptions = {
         body: notification.body,
-        icon: notification.icon || '/placeholder-logo.png',
-        badge: notification.badge || '/placeholder-logo.png',
+        icon: notification.icon || '/logo-192x192.png',
+        badge: notification.badge || '/logo-192x192.png',
         tag: notification.tag,
         requireInteraction: notification.requireInteraction || false,
-        data: notification.data
+        data: notification.data,
+        actions: notification.actions?.map(action => ({
+          action: action.action,
+          title: action.title,
+          icon: action.icon
+        }))
       }
 
       await this.registration?.showNotification(notification.title, options)
+      
+      // Log notification for analytics
+      await this.logNotification(notification)
     } catch (error) {
       console.error('Error showing local notification:', error)
     }
@@ -201,15 +209,30 @@ export class PushNotificationService {
   public async sendBloodRequestNotification(request: any): Promise<void> {
     const notification: PushNotification = {
       id: `blood-request-${request.id}`,
-      title: `🩸 ${request.urgency === 'critical' ? 'CRITICAL' : 'URGENT'} Blood Request`,
-      body: `${request.blood_type} blood needed at ${request.hospital_name}`,
+      title: `🩸 ${request.emergency_level === 'critical' ? 'CRITICAL' : 'URGENT'} Blood Request`,
+      body: `${request.blood_type} blood needed at ${request.hospital_name || request.location}`,
       data: {
         url: `/requests/${request.id}`,
         requestId: request.id,
-        type: 'blood_request'
+        type: 'blood_request',
+        bloodType: request.blood_type,
+        location: request.location,
+        urgency: request.emergency_level
       },
       tag: `blood-request-${request.id}`,
-      requireInteraction: request.urgency === 'critical'
+      requireInteraction: request.emergency_level === 'critical',
+      actions: [
+        {
+          action: 'respond',
+          title: 'I can help',
+          icon: '/icons/heart-16.png'
+        },
+        {
+          action: 'share',
+          title: 'Share request',
+          icon: '/icons/share-16.png'
+        }
+      ]
     }
 
     await this.sendLocalNotification(notification)
@@ -305,6 +328,137 @@ export class PushNotificationService {
       console.error('Error checking subscription:', error)
       return false
     }
+  }
+
+  /**
+   * Log notification for analytics and tracking
+   */
+  private async logNotification(notification: PushNotification): Promise<void> {
+    try {
+      const { data: { user } } = await this.supabase.auth.getUser()
+      if (!user) return
+
+      await this.supabase
+        .from('notification_logs')
+        .insert({
+          user_id: user.id,
+          notification_id: notification.id,
+          title: notification.title,
+          body: notification.body,
+          type: notification.data?.type || 'general',
+          data: notification.data,
+          sent_at: new Date().toISOString()
+        })
+    } catch (error) {
+      console.error('Error logging notification:', error)
+      // Don't throw as this is not critical
+    }
+  }
+
+  /**
+   * Get notification history for user
+   */
+  public async getNotificationHistory(userId: string, limit: number = 50): Promise<any[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from('notification_logs')
+        .select('*')
+        .eq('user_id', userId)
+        .order('sent_at', { ascending: false })
+        .limit(limit)
+
+      if (error) {
+        console.error('Error getting notification history:', error)
+        return []
+      }
+
+      return data || []
+    } catch (error) {
+      console.error('Error getting notification history:', error)
+      return []
+    }
+  }
+
+  /**
+   * Send notification to nearby donors based on location
+   */
+  public async sendLocationBasedNotification(
+    bloodType: string, 
+    location: { latitude: number; longitude: number }, 
+    radius: number = 10
+  ): Promise<void> {
+    try {
+      // This would typically be handled by the backend
+      // For now, we'll simulate finding nearby donors
+      const { data: nearbyDonors } = await this.supabase
+        .from('users')
+        .select('id, full_name, latitude, longitude')
+        .eq('blood_type', bloodType)
+        .eq('available', true)
+
+      if (!nearbyDonors) return
+
+      // Calculate distance and filter by radius
+      const donorsInRadius = nearbyDonors.filter(donor => {
+        if (!donor.latitude || !donor.longitude) return false
+        const distance = this.calculateDistance(
+          location.latitude, location.longitude,
+          donor.latitude, donor.longitude
+        )
+        return distance <= radius
+      })
+
+      // Send notifications to donors in radius
+      for (const donor of donorsInRadius) {
+        const notification: PushNotification = {
+          id: `nearby-request-${Date.now()}-${donor.id}`,
+          title: `🎯 Nearby Blood Request - ${bloodType}`,
+          body: `Someone near you needs ${bloodType} blood. You're within ${radius}km!`,
+          data: {
+            type: 'nearby_request',
+            bloodType,
+            location,
+            donorId: donor.id
+          },
+          tag: `nearby-${bloodType}`,
+          actions: [
+            {
+              action: 'respond',
+              title: 'I can help',
+              icon: '/icons/heart-16.png'
+            },
+            {
+              action: 'directions',
+              title: 'Get directions',
+              icon: '/icons/map-16.png'
+            }
+          ]
+        }
+        // In a real app, this would be sent via backend
+        console.log('Would send notification to donor:', donor.id, notification)
+      }
+    } catch (error) {
+      console.error('Error sending location-based notification:', error)
+    }
+  }
+
+  /**
+   * Calculate distance between two coordinates (Haversine formula)
+   */
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371 // Earth's radius in kilometers
+    const dLat = this.deg2rad(lat2 - lat1)
+    const dLon = this.deg2rad(lon2 - lon1)
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+    return R * c
+  }
+
+  private deg2rad(deg: number): number {
+    return deg * (Math.PI/180)
   }
 }
 

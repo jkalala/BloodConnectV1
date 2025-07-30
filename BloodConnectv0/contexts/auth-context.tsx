@@ -80,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const newUser = {
         id: authUser.id,
         phone: formatPhoneNumber(phone),
-        name: authUser.user_metadata?.name || authUser.user_metadata?.full_name || 'New User',
+        name: authUser.user_metadata?.name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
         blood_type: authUser.user_metadata?.blood_type || 'Unknown',
         location: authUser.user_metadata?.location || 'Unknown',
         allow_location: true,
@@ -224,13 +224,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: false, error: error.message }
       }
 
-      // Update user metadata
+      // Update user metadata - preserve existing name if available
       if (data.user) {
+        const existingName = data.user.user_metadata?.name || data.user.user_metadata?.full_name
         await supabase.auth.updateUser({
           data: {
-            name: 'Real User',
-            blood_type: 'Unknown',
-            location: 'Angola',
+            name: existingName || data.user.email?.split('@')[0] || 'User',
+            blood_type: data.user.user_metadata?.blood_type || 'Unknown',
+            location: data.user.user_metadata?.location || 'Angola',
             phone: formattedPhone
           }
         })

@@ -1,7 +1,7 @@
 "use client"
 
 import { useI18n } from "@/lib/i18n/client"
-import { useAuth } from "@/contexts/auth-context"
+import { useEnhancedAuth } from "@/contexts/enhanced-auth-context"
 import { ResponsiveLayout } from "@/components/responsive-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -16,7 +16,7 @@ import { toast } from "@/hooks/use-toast"
 
 export default function ProfilePage() {
   const t = useI18n()
-  const { user, setUser } = useAuth() // setUser may need to be exposed in useAuth
+  const { user, updateProfile } = useEnhancedAuth()
   const [name, setName] = useState(user?.name || "")
   const [address, setAddress] = useState(user?.location || "")
   const [saving, setSaving] = useState(false)
@@ -24,20 +24,33 @@ export default function ProfilePage() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      const res = await fetch("/api/profile/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, address }),
+      console.log('🔄 Updating profile with name:', name, 'and location:', address)
+      
+      const result = await updateProfile({
+        name: name.trim(),
+        location: address.trim()
       })
-      const data = await res.json()
-      if (data.success) {
-        toast({ title: "Profile updated!" })
-        setUser && setUser(data.user)
+
+      if (result.success) {
+        toast({ 
+          title: "Profile updated!", 
+          description: `Your name is now: ${name}` 
+        })
+        // The context will automatically update the user data
       } else {
-        toast({ title: "Failed to update", description: data.error, variant: "destructive" })
+        toast({ 
+          title: "Failed to update", 
+          description: result.error, 
+          variant: "destructive" 
+        })
       }
     } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" })
+      console.error('Profile update error:', e)
+      toast({ 
+        title: "Error", 
+        description: e.message, 
+        variant: "destructive" 
+      })
     } finally {
       setSaving(false)
     }

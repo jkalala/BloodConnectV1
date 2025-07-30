@@ -33,6 +33,7 @@ interface EnhancedAuthContextType {
   isLoading: boolean
   signIn: (phone: string, password: string) => Promise<{ success: boolean; error?: string }>
   signUp: (phone: string, password: string, name: string) => Promise<{ success: boolean; error?: string }>
+  updateProfile: (updates: { name?: string; [key: string]: any }) => Promise<{ success: boolean; error?: string }>
   signOut: () => Promise<void>
 }
 
@@ -121,12 +122,16 @@ export function EnhancedAuthProvider({ children }: { children: React.ReactNode }
 
         const formattedPhone = phone.replace(/[^\d+]/g, '').startsWith('+') ? phone : '+' + phone
 
+        const derivedName = authUser.user_metadata?.['name'] || authUser.user_metadata?.['full_name'] || authUser.email?.split('@')[0] || 'User'
+        console.log('👤 Creating enhanced user profile with name:', derivedName)
+        console.log('🔍 Available user metadata:', authUser.user_metadata)
+        
         const newUserData = {
           id: authUser.id,
           phone: formattedPhone,
-          name: authUser.user_metadata?.name || authUser.user_metadata?.full_name || 'Real User',
-          blood_type: authUser.user_metadata?.blood_type || 'Unknown',
-          location: authUser.user_metadata?.location || 'Angola',
+          name: derivedName,
+          blood_type: authUser.user_metadata?.['blood_type'] || 'Unknown',
+          location: authUser.user_metadata?.['location'] || 'Angola',
           allow_location: true,
           receive_alerts: true,
           available: true,
@@ -325,6 +330,8 @@ export function EnhancedAuthProvider({ children }: { children: React.ReactNode }
   }
 
   useEffect(() => {
+    let subscription: any = null
+
     const setupAuth = async () => {
       try {
         console.log('Starting auth setup')
@@ -342,7 +349,7 @@ export function EnhancedAuthProvider({ children }: { children: React.ReactNode }
         }
 
         // Listen for auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+        const { data: { subscription: authSubscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
           console.log('Auth state changed:', event, currentSession?.user?.id)
           setSession(currentSession)
           
@@ -357,11 +364,8 @@ export function EnhancedAuthProvider({ children }: { children: React.ReactNode }
           setIsLoading(false)
         })
 
+        subscription = authSubscription
         setIsLoading(false)
-
-        return () => {
-          subscription.unsubscribe()
-        }
       } catch (error) {
         console.error('Error in setupAuth:', {
           error: error instanceof Error ? {
@@ -375,6 +379,12 @@ export function EnhancedAuthProvider({ children }: { children: React.ReactNode }
     }
 
     setupAuth()
+
+    return () => {
+      if (subscription) {
+        subscription.unsubscribe()
+      }
+    }
   }, [supabase])
 
   const signIn = async (phone: string, password: string) => {
@@ -399,18 +409,38 @@ export function EnhancedAuthProvider({ children }: { children: React.ReactNode }
     }
   }
 
-  const signUp = async (phone: string, password: string, name: string) => {
+  const signUp = async (registrationDataOrPhone: any, password?: string, name?: string) => {
     try {
-      console.log('Attempting sign up for:', phone)
-      const formattedPhone = formatPhoneNumber(phone)
+      // Handle both old signature (phone, password, name) and new signature (registrationData)
+      let registrationData
+      if (typeof registrationDataOrPhone === 'string') {
+        // Old signature: signUp(phone, password, name)
+        registrationData = {
+          phone: registrationDataOrPhone,
+          password: password!,
+          name: name!
+        }
+      } else {
+        // New signature: signUp(registrationData)
+        registrationData = registrationDataOrPhone
+      }
+
+      console.log('Attempting sign up for:', registrationData.phone)
+      const formattedPhone = formatPhoneNumber(registrationData.phone)
       const { data, error } = await supabase.auth.signUp({
         email: `${formattedPhone}@bloodlink.app`,
-        password,
+        password: registrationData.password,
         phone: formattedPhone,
         options: {
           data: {
-            name,
-            phone: formattedPhone
+            name: registrationData.name,
+            phone: formattedPhone,
+            blood_type: registrationData.bloodType,
+            stakeholder_type: registrationData.stakeholderType,
+            location: registrationData.profileData?.location,
+            institution_id: registrationData.institutionId,
+            emergency_access: registrationData.emergencyAccess,
+            ...registrationData.profileData
           }
         }
       })
@@ -420,10 +450,65 @@ export function EnhancedAuthProvider({ children }: { children: React.ReactNode }
         return { success: false, error: error.message }
       }
 
-      console.log('Sign up successful:', data.user?.id)
+      console.log('✅ Sign up successful for:', registrationData.name, '- User ID:', data.user?.id)
+      console.log('📝 User metadata saved:', data.user?.user_metadata)
       return { success: true }
     } catch (error: any) {
       console.error('Unexpected sign up error:', error)
+      return { success: false, error: error.message }
+    }
+  }
+
+  const updateProfile = async (updates: { name?: string; [key: string]: any }) => {
+    try {
+      if (!user) {
+        return { success: false, error: 'No user logged in' }
+      }
+
+      console.log('🔄 Updating user profile:', updates)
+
+      // Update auth user metadata
+      if (updates.name) {
+        const { error: authError } = await supabase.auth.updateUser({
+          data: {
+            name: updates.name,
+            ...Object.fromEntries(
+              Object.entries(updates).filter(([key]) => key !== 'name')
+            )
+          }
+        })
+
+        if (authError) {
+          console.error('Auth update error:', authError)
+          return { success: false, error: authError.message }
+        }
+      }
+
+      // Update database profile
+      const { error: dbError } = await supabase
+        .from('users')
+        .update({
+          ...updates,
+          last_active: new Date().toISOString()
+        })
+        .eq('id', user.id)
+
+      if (dbError) {
+        console.error('Database update error:', dbError)
+        return { success: false, error: dbError.message }
+      }
+
+      console.log('✅ Profile updated successfully')
+      
+      // Refresh the user data by refetching from database
+      if (session?.user) {
+        const refreshedProfile = await createEnhancedUser(session.user)
+        setUser(refreshedProfile)
+      }
+      
+      return { success: true }
+    } catch (error: any) {
+      console.error('Unexpected profile update error:', error)
       return { success: false, error: error.message }
     }
   }
@@ -439,6 +524,7 @@ export function EnhancedAuthProvider({ children }: { children: React.ReactNode }
     isLoading,
     signIn,
     signUp,
+    updateProfile,
     signOut,
   }
 

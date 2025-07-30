@@ -25,6 +25,10 @@ export interface DonorProfile {
 
 export class AIMatchingService {
   private supabase = getSupabase()
+  private activeRequests = new Map<string, Promise<any>>()
+  private maxConcurrentRequests = 5
+  private cacheTimeout = 5 * 60 * 1000 // 5 minutes
+  private cache = new Map<string, { data: any; timestamp: number }>()
 
   /**
    * AI-powered donor matching with machine learning
@@ -35,13 +39,52 @@ export class AIMatchingService {
     urgency: string,
     location: string
   ): Promise<AIMatchPrediction[]> {
+    // Check for concurrent request limit
+    if (this.activeRequests.size >= this.maxConcurrentRequests) {
+      console.warn(`⚠️ Request throttled: ${this.activeRequests.size} active requests`)
+      throw new Error('Too many concurrent requests. Please try again later.')
+    }
+
+    // Check cache first
+    const cacheKey = `${requestId}-${bloodType}-${urgency}-${location}`
+    const cached = this.cache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
+      console.log('✅ Returning cached results')
+      return cached.data
+    }
+
     const tracker = performanceMonitor.startTracking('ai-matching', 'FIND_DONORS')
+    const requestPromise = this._findOptimalDonorsInternal(requestId, bloodType, urgency, location, tracker, cacheKey)
     
+    // Track active request
+    this.activeRequests.set(requestId, requestPromise)
+    
+    try {
+      const result = await requestPromise
+      return result
+    } finally {
+      // Cleanup
+      this.activeRequests.delete(requestId)
+      // Force garbage collection hint
+      if (global.gc) {
+        global.gc()
+      }
+    }
+  }
+
+  private async _findOptimalDonorsInternal(
+    requestId: string,
+    bloodType: string,
+    urgency: string,
+    location: string,
+    tracker: any,
+    cacheKey: string
+  ): Promise<AIMatchPrediction[]> {
     try {
       console.log(`🤖 Finding optimal donors for request ${requestId}`)
       
-      // Get compatible donors
-      const compatibleDonors = await this.getCompatibleDonors(bloodType, location)
+      // Get compatible donors with limit to prevent memory overflow
+      const compatibleDonors = await this.getCompatibleDonors(bloodType, location, 50) // Limit to 50 donors
       
       if (compatibleDonors.length === 0) {
         console.log('No compatible donors found')
@@ -49,14 +92,66 @@ export class AIMatchingService {
         return []
       }
 
-      // Use ML engine for predictions
+      // Process donors in batches to manage memory
+      const batchSize = 10
       const predictions: AIMatchPrediction[] = []
       
-      for (const donor of compatibleDonors) {
-        // Get ML prediction
-        const mlPrediction = await mlEngine.predictDonorMatch(donor.id, requestId)
-        const successProbability = await mlEngine.predictSuccessProbability(donor.id, requestId)
-        const responseTimePrediction = await mlEngine.predictResponseTime(donor.id, urgency)
+      for (let i = 0; i < compatibleDonors.length; i += batchSize) {
+        const batch = compatibleDonors.slice(i, i + batchSize)
+        const batchPredictions = await this.processDonorBatch(batch, requestId, urgency)
+        predictions.push(...batchPredictions)
+        
+        // Allow garbage collection between batches
+        if (i % 20 === 0 && global.gc) {
+          global.gc()
+        }
+      }
+      
+      // Sort by combined ML score and success probability
+      predictions.sort((a, b) => {
+        const scoreA = (a.compatibility_score * 0.4) + (a.success_probability * 100 * 0.6)
+        const scoreB = (b.compatibility_score * 0.4) + (b.success_probability * 100 * 0.6)
+        return scoreB - scoreA
+      })
+      
+      const topResults = predictions.slice(0, 10) // Return top 10 matches
+      
+      // Cache results
+      this.cache.set(cacheKey, { data: topResults, timestamp: Date.now() })
+      this.cleanupCache()
+      
+      console.log(`✅ Found ${predictions.length} donor matches, returning top 10`)
+      tracker.end(200)
+      
+      return topResults
+    } catch (error: any) {
+      console.error('❌ Error in AI matching:', error)
+      tracker.end(500)
+      return []
+    }
+  }
+
+  private async processDonorBatch(donors: any[], requestId: string, urgency: string): Promise<AIMatchPrediction[]> {
+    const batchPredictions: AIMatchPrediction[] = []
+    
+    // Process donors in parallel but with controlled concurrency
+    const concurrentPromises = donors.map(async (donor) => {
+      try {
+        // Get ML prediction with timeout
+        const mlPrediction = await Promise.race([
+          mlEngine.predictDonorMatch(donor.id, requestId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+        ]).catch(() => null)
+        
+        const successProbability = await Promise.race([
+          mlEngine.predictSuccessProbability(donor.id, requestId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+        ]).catch(() => 0.5)
+        
+        const responseTimePrediction = await Promise.race([
+          mlEngine.predictResponseTime(donor.id, urgency),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+        ]).catch(() => 30)
         
         // Combine ML prediction with traditional factors
         const compatibilityScore = mlPrediction ? 
@@ -67,62 +162,79 @@ export class AIMatchingService {
           mlPrediction.importance.slice(0, 5).map(imp => imp.feature) :
           this.identifyFactors(donor, { factors: {} }, urgency)
 
-        predictions.push({
+        return {
           donor_id: donor.id,
           recipient_id: requestId,
           compatibility_score: compatibilityScore,
           success_probability: successProbability,
           response_time_prediction: responseTimePrediction,
           factors
-        })
-
-        // Store prediction for evaluation
-        await this.storePrediction(mlPrediction, donor.id, requestId)
+        }
+      } catch (error) {
+        console.error(`Error processing donor ${donor.id}:`, error)
+        return null
       }
-      
-      // Sort by combined ML score and success probability
-      predictions.sort((a, b) => {
-        const scoreA = (a.compatibility_score * 0.4) + (a.success_probability * 100 * 0.6)
-        const scoreB = (b.compatibility_score * 0.4) + (b.success_probability * 100 * 0.6)
-        return scoreB - scoreA
-      })
-      
-      console.log(`✅ Found ${predictions.length} donor matches, returning top 10`)
-      tracker.end(200)
-      
-      return predictions.slice(0, 10) // Return top 10 matches
-    } catch (error: any) {
-      console.error('❌ Error in AI matching:', error)
-      tracker.end(500)
-      return []
+    })
+
+    const results = await Promise.allSettled(concurrentPromises)
+    
+    results.forEach((result) => {
+      if (result.status === 'fulfilled' && result.value) {
+        batchPredictions.push(result.value)
+      }
+    })
+
+    return batchPredictions
+  }
+
+  private cleanupCache(): void {
+    const now = Date.now()
+    for (const [key, value] of this.cache.entries()) {
+      if (now - value.timestamp > this.cacheTimeout) {
+        this.cache.delete(key)
+      }
     }
   }
 
   /**
-   * Get historical donation data for ML training
+   * Get historical donation data for ML training (memory optimized)
    */
-  private async getHistoricalData() {
+  private async getHistoricalData(limit: number = 500) {
+    // Use cache for historical data
+    const cacheKey = `historical-data-${limit}`
+    const cached = this.cache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < this.cacheTimeout * 2) { // Cache for 10 minutes
+      return cached.data
+    }
+
     const { data: requests } = await this.supabase
       .from('blood_requests')
       .select(`
-        *,
-        donor_responses (
+        id,
+        blood_type,
+        urgency,
+        status,
+        created_at,
+        donor_responses!inner (
           response_type,
           response_time,
-          donor_id
+          donor_id,
+          created_at
         )
       `)
       .not('status', 'eq', 'pending')
       .order('created_at', { ascending: false })
-      .limit(1000)
+      .limit(limit)
 
-    return requests || []
+    const result = requests || []
+    this.cache.set(cacheKey, { data: result, timestamp: Date.now() })
+    return result
   }
 
   /**
    * Get compatible donors with enhanced filtering
    */
-  private async getCompatibleDonors(bloodType: string, location: string) {
+  private async getCompatibleDonors(bloodType: string, location: string, limit: number = 100) {
     const compatibilityMatrix: Record<string, string[]> = {
       'O-': ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
       'O+': ['O+', 'A+', 'B+', 'AB+'],
@@ -153,6 +265,8 @@ export class AIMatchingService {
       .in('blood_type', compatibleTypes)
       .eq('available', true)
       .eq('receive_alerts', true)
+      .order('response_rate', { ascending: false })
+      .limit(limit)
 
     return donors || []
   }
@@ -488,7 +602,7 @@ export class AIMatchingService {
   }
 
   /**
-   * Update all donor profiles with latest ML insights
+   * Update all donor profiles with latest ML insights (memory optimized)
    */
   async updateAllDonorProfiles(): Promise<void> {
     try {
@@ -496,11 +610,29 @@ export class AIMatchingService {
         .from('users')
         .select('id')
         .not('blood_type', 'is', null)
+        .limit(1000) // Limit to prevent memory overflow
 
       console.log(`🔄 Updating ${donors?.length || 0} donor profiles...`)
 
-      for (const donor of donors || []) {
-        await this.updateDonorProfile(donor.id)
+      // Process in smaller batches to manage memory
+      const batchSize = 20
+      for (let i = 0; i < (donors?.length || 0); i += batchSize) {
+        const batch = donors?.slice(i, i + batchSize) || []
+        
+        // Process batch in parallel with controlled concurrency
+        await Promise.allSettled(
+          batch.map(donor => this.updateDonorProfile(donor.id))
+        )
+        
+        console.log(`✅ Updated ${Math.min(i + batchSize, donors?.length || 0)} / ${donors?.length || 0} profiles`)
+        
+        // Allow garbage collection between batches
+        if (i % 100 === 0 && global.gc) {
+          global.gc()
+        }
+        
+        // Small delay to prevent overwhelming the database
+        await new Promise(resolve => setTimeout(resolve, 100))
       }
 
       console.log('✅ All donor profiles updated')
@@ -559,7 +691,94 @@ export class AIMatchingService {
       }
     }
   }
+
+  /**
+   * Memory management and cleanup
+   */
+  cleanup(): void {
+    console.log('🧹 Cleaning up AI matching service...')
+    
+    // Clear caches
+    this.cache.clear()
+    
+    // Cancel active requests (if possible)
+    this.activeRequests.clear()
+    
+    // Force garbage collection
+    if (global.gc) {
+      global.gc()
+    }
+    
+    console.log('✅ AI matching service cleanup completed')
+  }
+
+  /**
+   * Get memory usage statistics
+   */
+  getMemoryStats(): {
+    cacheSize: number
+    activeRequests: number
+    memoryUsage: NodeJS.MemoryUsage
+  } {
+    return {
+      cacheSize: this.cache.size,
+      activeRequests: this.activeRequests.size,
+      memoryUsage: process.memoryUsage()
+    }
+  }
+
+  /**
+   * Health check for the service
+   */
+  async healthCheck(): Promise<{
+    status: 'healthy' | 'degraded' | 'unhealthy'
+    issues: string[]
+    metrics: any
+  }> {
+    const issues: string[] = []
+    let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy'
+    
+    const memoryStats = this.getMemoryStats()
+    const memoryUsageMB = memoryStats.memoryUsage.heapUsed / 1024 / 1024
+    
+    // Check memory usage
+    if (memoryUsageMB > 200) {
+      issues.push(`High memory usage: ${memoryUsageMB.toFixed(2)}MB`)
+      status = 'unhealthy'
+    } else if (memoryUsageMB > 100) {
+      issues.push(`Elevated memory usage: ${memoryUsageMB.toFixed(2)}MB`)
+      status = 'degraded'
+    }
+    
+    // Check active requests
+    if (memoryStats.activeRequests >= this.maxConcurrentRequests) {
+      issues.push(`Maximum concurrent requests reached: ${memoryStats.activeRequests}`)
+      status = status === 'unhealthy' ? 'unhealthy' : 'degraded'
+    }
+    
+    // Check cache size
+    if (memoryStats.cacheSize > 100) {
+      issues.push(`Large cache size: ${memoryStats.cacheSize} items`)
+      if (status === 'healthy') status = 'degraded'
+    }
+    
+    return {
+      status,
+      issues,
+      metrics: memoryStats
+    }
+  }
 }
 
 // Export singleton instance
-export const aiMatchingService = new AIMatchingService() 
+export const aiMatchingService = new AIMatchingService()
+
+// Auto-cleanup every 30 minutes
+setInterval(() => {
+  aiMatchingService.cleanupCache()
+}, 30 * 60 * 1000)
+
+// Cleanup on process exit
+process.on('beforeExit', () => {
+  aiMatchingService.cleanup()
+}) 

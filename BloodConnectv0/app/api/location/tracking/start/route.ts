@@ -8,6 +8,7 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { handleError, createErrorResponse, AuthenticationError, ValidationError } from '@/lib/error-handling'
 import { performanceMonitor } from '@/lib/performance-monitoring'
 import { enhancedLocationService } from '@/lib/enhanced-location-service'
+import { requireAuth, canAccessUserResource } from '@/lib/auth-middleware'
 import { z } from 'zod'
 
 const startTrackingSchema = z.object({
@@ -22,13 +23,17 @@ export async function POST(request: NextRequest) {
   const tracker = performanceMonitor.startTracking('/api/location/tracking/start', 'POST')
 
   try {
-    const supabase = createServerSupabaseClient()
-    
     // Verify user authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      throw AuthenticationError('Authentication required')
+    const authResult = await requireAuth(request)
+    if (!authResult.success) {
+      return NextResponse.json(
+        { success: false, error: authResult.error },
+        { status: authResult.status }
+      )
     }
+
+    const { context: authContext } = authResult
+    const supabase = createServerSupabaseClient()
 
     // Parse and validate request body
     const body = await request.json()
@@ -36,16 +41,8 @@ export async function POST(request: NextRequest) {
     const { userId, type, requestId, highAccuracy, updateInterval } = validatedData
 
     // Verify user can start tracking for this userId (themselves or admin)
-    if (user.id !== userId) {
-      const { data: userProfile } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
-
-      if (!userProfile || !['admin', 'super_admin'].includes(userProfile.role)) {
-        throw ValidationError('Can only start tracking for your own account')
-      }
+    if (!canAccessUserResource(authContext, userId, { allowSelf: true, requireAdmin: false })) {
+      throw ValidationError('Can only start tracking for your own account')
     }
 
     // Check if user has given tracking consent
@@ -72,7 +69,7 @@ export async function POST(request: NextRequest) {
       {
         highAccuracy,
         updateInterval,
-        requestId
+        ...(requestId && { requestId })
       }
     )
 
@@ -81,13 +78,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Log tracking start in security events
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0] || 
+                     request.headers.get('x-real-ip') || 
+                     'unknown'
+
     await supabase
       .from('security_events')
       .insert([{
         event_type: 'location_tracking_started',
         risk_level: 'low',
-        user_id: user.id,
-        ip_address: request.ip || 'unknown',
+        user_id: authContext.user.id,
+        ip_address: clientIp,
         user_agent: request.headers.get('user-agent') || 'unknown',
         details: {
           tracked_user_id: userId,
@@ -128,13 +129,17 @@ export async function GET(request: NextRequest) {
   const tracker = performanceMonitor.startTracking('/api/location/tracking/start', 'GET')
 
   try {
-    const supabase = createServerSupabaseClient()
-    
     // Verify user authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      throw AuthenticationError('Authentication required')
+    const authResult = await requireAuth(request)
+    if (!authResult.success) {
+      return NextResponse.json(
+        { success: false, error: authResult.error },
+        { status: authResult.status }
+      )
     }
+
+    const { context: authContext } = authResult
+    const supabase = createServerSupabaseClient()
 
     // Get active tracking sessions for user
     const { data: trackingSessions } = await supabase
@@ -150,7 +155,7 @@ export async function GET(request: NextRequest) {
         started_at,
         stopped_at
       `)
-      .eq('user_id', user.id)
+      .eq('user_id', authContext.user.id)
       .eq('status', 'active')
       .order('started_at', { ascending: false })
 

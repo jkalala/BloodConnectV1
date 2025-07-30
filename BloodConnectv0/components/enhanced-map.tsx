@@ -107,6 +107,9 @@ export function EnhancedMap({
   const [selectedMarker, setSelectedMarker] = useState<any>(null)
   const [trackingEnabled, setTrackingEnabled] = useState(false)
   const [routeDisplayed, setRouteDisplayed] = useState<string | null>(null)
+  const [websocketConnected, setWebsocketConnected] = useState(false)
+  const [markerClusters, setMarkerClusters] = useState<any[]>([])
+  const wsRef = useRef<WebSocket | null>(null)
 
   // Callback ref to detect when the map container is ready
   const mapCallbackRef = useCallback((node: HTMLDivElement | null) => {
@@ -151,13 +154,13 @@ export function EnhancedMap({
 
   // Load Google Maps API
   const loadGoogleMapsAPI = async () => {
-    const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyD70d12Z53Ah6diehNl4PBCO3VwljXlrsw"
+    const GOOGLE_MAPS_API_KEY = process.env['NEXT_PUBLIC_GOOGLE_MAPS_API_KEY']
     
     console.log("🗺️ Starting Google Maps API loading...")
     console.log("🔑 API Key:", GOOGLE_MAPS_API_KEY ? GOOGLE_MAPS_API_KEY.substring(0, 20) + "..." : "NOT_FOUND")
     
     if (!GOOGLE_MAPS_API_KEY) {
-      throw new Error("Google Maps API key is not configured")
+      throw new Error("Google Maps API key is not configured. Please set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY in your environment variables.")
     }
 
     // Check if Google Maps API is already loaded
@@ -263,6 +266,9 @@ export function EnhancedMap({
       setMap(googleMap)
       setLoading(false)
 
+      // Initialize marker clustering
+      initializeMarkerClustering(googleMap)
+
       // Load initial data
       console.log("📊 Loading initial map data...")
       await loadMapData()
@@ -292,18 +298,215 @@ export function EnhancedMap({
     }
   }, [])
 
-  // Real-time updates
+  // Real-time updates via WebSocket
   useEffect(() => {
+    if (!map || !currentUserId) return
+
+    // Initialize WebSocket connection for real-time updates
+    const initWebSocket = () => {
+      try {
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001'
+        const ws = new WebSocket(`${wsUrl}/location-updates`)
+        
+        ws.onopen = () => {
+          console.log('📡 WebSocket connected for real-time updates')
+          setWebsocketConnected(true)
+          
+          // Subscribe to location updates
+          ws.send(JSON.stringify({
+            type: 'subscribe',
+            channel: 'location-updates',
+            userId: currentUserId
+          }))
+        }
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            handleRealTimeUpdate(data)
+          } catch (error) {
+            console.error('Error parsing WebSocket message:', error)
+          }
+        }
+
+        ws.onclose = () => {
+          console.log('📡 WebSocket disconnected')
+          setWebsocketConnected(false)
+          
+          // Reconnect after 5 seconds
+          setTimeout(initWebSocket, 5000)
+        }
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error)
+          setWebsocketConnected(false)
+        }
+
+        wsRef.current = ws
+        
+      } catch (error) {
+        console.error('Failed to initialize WebSocket:', error)
+        // Fallback to polling
+        setTimeout(() => {
+          if (trackingEnabled) {
+            loadMapData()
+          }
+        }, 30000)
+      }
+    }
+
+    initWebSocket()
+
+    // Cleanup on unmount
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
+    }
+  }, [map, currentUserId, trackingEnabled])
+
+  // Handle real-time updates from WebSocket
+  const handleRealTimeUpdate = (data: any) => {
+    console.log('📍 Real-time update received:', data)
+    
+    switch (data.type) {
+      case 'donor_location_update':
+        setDonors(prev => prev.map(donor => 
+          donor.id === data.userId 
+            ? { ...donor, coordinates: data.coordinates, status: data.status }
+            : donor
+        ))
+        break
+        
+      case 'new_blood_request':
+        setRequests(prev => [...prev, {
+          id: data.requestId,
+          patientName: data.patientName,
+          bloodType: data.bloodType,
+          urgency: data.urgency,
+          coordinates: data.coordinates,
+          hospital: data.hospital,
+          unitsNeeded: data.unitsNeeded,
+          status: 'pending',
+          createdAt: data.createdAt,
+          matchedDonors: []
+        }])
+        break
+        
+      case 'request_status_update':
+        setRequests(prev => prev.map(request =>
+          request.id === data.requestId
+            ? { ...request, status: data.status, matchedDonors: data.matchedDonors || request.matchedDonors }
+            : request
+        ))
+        break
+        
+      default:
+        console.log('Unknown real-time update type:', data.type)
+    }
+  }
+
+  // Initialize marker clustering for performance
+  const initializeMarkerClustering = (googleMap: any) => {
+    try {
+      console.log('🔗 Initializing marker clustering...')
+      
+      // Marker clustering will be initialized when @googlemaps/markerclusterer is available
+      // For now, we'll implement a simple clustering algorithm
+      const clusters: any[] = []
+      setMarkerClusters(clusters)
+      
+      console.log('✅ Marker clustering initialized')
+    } catch (error) {
+      console.error('❌ Error initializing marker clustering:', error)
+    }
+  }
+
+  // Simple clustering algorithm for performance
+  const clusterMarkers = (markers: any[], zoomLevel: number = 12) => {
+    const clusters: any[] = []
+    const clusterRadius = 100 / Math.pow(2, zoomLevel - 10) // Adjust cluster radius based on zoom
+    
+    markers.forEach(marker => {
+      let addedToCluster = false
+      
+      // Try to add to existing cluster
+      for (const cluster of clusters) {
+        const distance = calculateDistance(
+          marker.coordinates.lat,
+          marker.coordinates.lng,
+          cluster.center.lat,
+          cluster.center.lng
+        )
+        
+        if (distance < clusterRadius) {
+          cluster.markers.push(marker)
+          // Update cluster center (average position)
+          cluster.center.lat = cluster.markers.reduce((sum: number, m: any) => sum + m.coordinates.lat, 0) / cluster.markers.length
+          cluster.center.lng = cluster.markers.reduce((sum: number, m: any) => sum + m.coordinates.lng, 0) / cluster.markers.length
+          addedToCluster = true
+          break
+        }
+      }
+      
+      // Create new cluster if not added to existing one
+      if (!addedToCluster) {
+        clusters.push({
+          id: `cluster_${clusters.length}`,
+          center: { ...marker.coordinates },
+          markers: [marker],
+          type: marker.type || 'mixed'
+        })
+      }
+    })
+    
+    return clusters
+  }
+
+  // Calculate distance between two coordinates (in km)
+  const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+    const R = 6371 // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLng = (lng2 - lng1) * Math.PI / 180
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLng/2) * Math.sin(dLng/2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+    return R * c
+  }
+
+  // Update markers with clustering
+  const updateMarkersOnMap = () => {
     if (!map) return
 
-    const interval = setInterval(async () => {
-      if (trackingEnabled) {
-        await loadMapData()
-      }
-    }, 30000) // Update every 30 seconds
+    // Combine all markers
+    const allMarkers = [
+      ...donors.map(d => ({ ...d, type: 'donor' })),
+      ...requests.map(r => ({ ...r, type: 'request' })),
+      ...bloodBanks.map(b => ({ ...b, type: 'blood_bank' }))
+    ]
 
-    return () => clearInterval(interval)
-  }, [map, trackingEnabled])
+    // Apply clustering if there are many markers
+    if (allMarkers.length > 20) {
+      const clustered = clusterMarkers(allMarkers, map.getZoom())
+      setMarkerClusters(clustered)
+      console.log(`🔗 Clustered ${allMarkers.length} markers into ${clustered.length} clusters`)
+    } else {
+      // Show individual markers when count is low
+      setMarkerClusters(allMarkers.map(marker => ({
+        id: marker.id,
+        center: marker.coordinates,
+        markers: [marker],
+        type: marker.type
+      })))
+    }
+  }
+
+  // Update markers when data changes
+  useEffect(() => {
+    updateMarkersOnMap()
+  }, [donors, requests, bloodBanks, map])
 
   const loadMapData = async () => {
     try {
@@ -334,16 +537,46 @@ export function EnhancedMap({
 
   const loadNearbyDonors = async () => {
     try {
-      // Mock API call - replace with actual endpoint
+      console.log('🩸 Loading nearby donors...')
+      
+      // Use user location if available, otherwise use map center
+      const searchLocation = userLocation || center
+      
       const response = await fetch('/api/location/nearby-donors?' + new URLSearchParams({
-        lat: center.lat.toString(),
-        lng: center.lng.toString(),
-        radius: '10'
-      }))
+        lat: searchLocation.lat.toString(),
+        lng: searchLocation.lng.toString(),
+        radius: '15', // 15km radius
+        maxResults: '50'
+      }), {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('supabase.auth.token')}`,
+          'Content-Type': 'application/json'
+        }
+      })
 
       if (response.ok) {
         const data = await response.json()
-        setDonors(data.donors || [])
+        if (data.success && data.data?.donors) {
+          const donorMarkers: DonorMarker[] = data.data.donors.map((donor: any) => ({
+            id: donor.id,
+            name: donor.name || 'Anonymous Donor',
+            bloodType: donor.bloodType || donor.blood_type,
+            coordinates: donor.coordinates || { lat: donor.current_latitude, lng: donor.current_longitude },
+            status: donor.status || 'available',
+            distance: donor.distance || 0,
+            estimatedArrival: donor.estimatedArrival || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            responseRate: donor.responseRate || donor.response_rate || 0.85,
+            verified: donor.verified || false
+          }))
+          
+          setDonors(donorMarkers)
+          console.log(`✅ Loaded ${donorMarkers.length} donor markers`)
+        }
+      } else if (response.status === 401) {
+        console.warn('⚠️ Authentication required for donor data')
+        setError('Please log in to view donor locations')
+      } else {
+        console.error('❌ Failed to load donors:', response.status)
       }
     } catch (error) {
       console.error('Error loading donors:', error)
@@ -352,15 +585,43 @@ export function EnhancedMap({
 
   const loadBloodRequests = async () => {
     try {
+      console.log('🩸 Loading blood requests...')
+      
+      const searchLocation = userLocation || center
+      
       const response = await fetch('/api/location/blood-requests?' + new URLSearchParams({
-        lat: center.lat.toString(),
-        lng: center.lng.toString(),
-        radius: '20'
-      }))
+        lat: searchLocation.lat.toString(),
+        lng: searchLocation.lng.toString(),
+        radius: '20',
+        maxResults: '30'
+      }), {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('supabase.auth.token')}`,
+          'Content-Type': 'application/json'
+        }
+      })
 
       if (response.ok) {
         const data = await response.json()
-        setRequests(data.requests || [])
+        if (data.success && data.data?.requests) {
+          const requestMarkers: BloodRequestMarker[] = data.data.requests.map((request: any) => ({
+            id: request.id,
+            patientName: request.patientName,
+            bloodType: request.bloodType,
+            urgency: request.urgency,
+            coordinates: request.coordinates,
+            hospital: request.hospital,
+            unitsNeeded: request.unitsNeeded,
+            status: request.status,
+            createdAt: request.createdAt,
+            matchedDonors: [] // Will be populated by matching service
+          }))
+          
+          setRequests(requestMarkers)
+          console.log(`✅ Loaded ${requestMarkers.length} blood request markers`)
+        }
+      } else if (response.status === 401) {
+        console.warn('⚠️ Authentication required for blood requests')
       }
     } catch (error) {
       console.error('Error loading requests:', error)
@@ -369,15 +630,41 @@ export function EnhancedMap({
 
   const loadBloodBanks = async () => {
     try {
+      console.log('🏥 Loading blood banks...')
+      
+      const searchLocation = userLocation || center
+      
       const response = await fetch('/api/location/blood-banks?' + new URLSearchParams({
-        lat: center.lat.toString(),
-        lng: center.lng.toString(),
-        radius: '25'
-      }))
+        lat: searchLocation.lat.toString(),
+        lng: searchLocation.lng.toString(),
+        radius: '25',
+        isActive: 'true',
+        maxResults: '20'
+      }), {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('supabase.auth.token')}`,
+          'Content-Type': 'application/json'
+        }
+      })
 
       if (response.ok) {
         const data = await response.json()
-        setBloodBanks(data.bloodBanks || [])
+        if (data.success && data.data?.bloodBanks) {
+          const bankMarkers: BloodBankMarker[] = data.data.bloodBanks.map((bank: any) => ({
+            id: bank.id,
+            name: bank.name,
+            coordinates: bank.coordinates,
+            address: bank.address,
+            isActive: bank.isActive,
+            distance: bank.distance,
+            inventory: bank.inventory || {}
+          }))
+          
+          setBloodBanks(bankMarkers)
+          console.log(`✅ Loaded ${bankMarkers.length} blood bank markers`)
+        }
+      } else if (response.status === 401) {
+        console.warn('⚠️ Authentication required for blood banks')
       }
     } catch (error) {
       console.error('Error loading blood banks:', error)
@@ -577,8 +864,7 @@ export function EnhancedMap({
                   <RefreshCw className="h-8 w-8 animate-spin mx-auto text-blue-500" />
                   <p>Loading Google Maps...</p>
                   <p className="text-xs text-muted-foreground">
-                    API Key: {process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ? 
-                      process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.substring(0, 20) + "..." : "Not configured"}
+                    {process.env['NEXT_PUBLIC_GOOGLE_MAPS_API_KEY'] ? "API Key configured" : "API Key not configured"}
                   </p>
                 </div>
               </div>

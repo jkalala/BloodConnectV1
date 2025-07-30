@@ -198,3 +198,35 @@ function openDatabase() {
     }
   })
 }
+
+// Install prompt handling
+self.addEventListener('beforeinstallprompt', (event) => {
+  console.log('[ServiceWorker] Before install prompt')
+  // Prevent the mini-infobar from appearing on mobile
+  event.preventDefault()
+  
+  // Notify clients that install is available
+  self.clients.matchAll().then(clients => {
+    clients.forEach(client => {
+      client.postMessage({
+        type: 'INSTALL_AVAILABLE',
+        payload: { canInstall: true }
+      })
+    })
+  })
+})
+
+// App installed event
+self.addEventListener('appinstalled', (event) => {
+  console.log('[ServiceWorker] App installed')
+  
+  // Notify clients that app was installed
+  self.clients.matchAll().then(clients => {
+    clients.forEach(client => {
+      client.postMessage({
+        type: 'APP_INSTALLED',
+        payload: { installed: true }
+      })
+    })
+  })
+})
