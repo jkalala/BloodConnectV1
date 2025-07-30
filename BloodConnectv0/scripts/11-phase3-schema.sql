@@ -1,6 +1,17 @@
 -- Phase 3: Advanced Features Schema
 -- AI Matching, Blockchain Tracking, IoT Monitoring, Advanced Analytics
 
+-- Drop existing trigger if it exists
+DROP TRIGGER IF EXISTS update_donor_analytics_trigger ON donor_responses;
+
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "Users can view their own AI predictions" ON ai_match_predictions;
+DROP POLICY IF EXISTS "Users can view blockchain records they're involved in" ON blockchain_records;
+DROP POLICY IF EXISTS "Blood bank staff can view IoT devices" ON iot_devices;
+DROP POLICY IF EXISTS "Users can view their own blood units" ON blood_units;
+DROP POLICY IF EXISTS "Blood bank staff can view quality alerts" ON quality_alerts;
+DROP POLICY IF EXISTS "Analytics cache is readable by all" ON analytics_cache;
+
 -- AI Matching Tables
 CREATE TABLE IF NOT EXISTS ai_match_predictions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

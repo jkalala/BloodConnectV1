@@ -1,4 +1,6 @@
 import { getSupabase } from "./supabase"
+import { mlEngine } from "./ml-engine"
+import { performanceMonitor } from "./performance-monitoring"
 
 export interface AIMatchPrediction {
   donor_id: string
@@ -33,27 +35,65 @@ export class AIMatchingService {
     urgency: string,
     location: string
   ): Promise<AIMatchPrediction[]> {
+    const tracker = performanceMonitor.startTracking('ai-matching', 'FIND_DONORS')
+    
     try {
-      // Get historical data for ML training
-      const historicalData = await this.getHistoricalData()
+      console.log(`🤖 Finding optimal donors for request ${requestId}`)
       
       // Get compatible donors
       const compatibleDonors = await this.getCompatibleDonors(bloodType, location)
       
-      // Apply ML-based scoring
-      const predictions = await this.applyMLScoring(
-        compatibleDonors,
-        requestId,
-        urgency,
-        historicalData
-      )
+      if (compatibleDonors.length === 0) {
+        console.log('No compatible donors found')
+        tracker.end(200)
+        return []
+      }
+
+      // Use ML engine for predictions
+      const predictions: AIMatchPrediction[] = []
       
-      // Sort by success probability
-      predictions.sort((a, b) => b.success_probability - a.success_probability)
+      for (const donor of compatibleDonors) {
+        // Get ML prediction
+        const mlPrediction = await mlEngine.predictDonorMatch(donor.id, requestId)
+        const successProbability = await mlEngine.predictSuccessProbability(donor.id, requestId)
+        const responseTimePrediction = await mlEngine.predictResponseTime(donor.id, urgency)
+        
+        // Combine ML prediction with traditional factors
+        const compatibilityScore = mlPrediction ? 
+          Math.round(mlPrediction.prediction * 100) : 
+          this.calculateBaseCompatibility(donor, urgency)
+          
+        const factors = mlPrediction ? 
+          mlPrediction.importance.slice(0, 5).map(imp => imp.feature) :
+          this.identifyFactors(donor, { factors: {} }, urgency)
+
+        predictions.push({
+          donor_id: donor.id,
+          recipient_id: requestId,
+          compatibility_score: compatibilityScore,
+          success_probability: successProbability,
+          response_time_prediction: responseTimePrediction,
+          factors
+        })
+
+        // Store prediction for evaluation
+        await this.storePrediction(mlPrediction, donor.id, requestId)
+      }
+      
+      // Sort by combined ML score and success probability
+      predictions.sort((a, b) => {
+        const scoreA = (a.compatibility_score * 0.4) + (a.success_probability * 100 * 0.6)
+        const scoreB = (b.compatibility_score * 0.4) + (b.success_probability * 100 * 0.6)
+        return scoreB - scoreA
+      })
+      
+      console.log(`✅ Found ${predictions.length} donor matches, returning top 10`)
+      tracker.end(200)
       
       return predictions.slice(0, 10) // Return top 10 matches
     } catch (error: any) {
-      console.error('Error in AI matching:', error)
+      console.error('❌ Error in AI matching:', error)
+      tracker.end(500)
       return []
     }
   }
@@ -399,6 +439,125 @@ export class AIMatchingService {
   private calculateSuccessRate(responses: any[]): number {
     const successful = responses.filter(resp => resp.response_type === 'accept').length
     return successful / responses.length
+  }
+
+  /**
+   * Store ML prediction for evaluation
+   */
+  private async storePrediction(mlPrediction: any, donorId: string, requestId: string): Promise<void> {
+    if (!mlPrediction) return
+
+    try {
+      await this.supabase
+        .from('ml_predictions')
+        .insert([{
+          model_type: 'donor_matching',
+          model_version: 1,
+          donor_id: donorId,
+          request_id: requestId,
+          prediction_value: mlPrediction.prediction,
+          confidence: mlPrediction.confidence,
+          features: mlPrediction.importance,
+          explanation: mlPrediction.explanation
+        }])
+    } catch (error) {
+      console.error('Error storing ML prediction:', error)
+    }
+  }
+
+  /**
+   * Train ML models with latest data
+   */
+  async trainModels(): Promise<{ success: boolean; accuracy: Record<string, number> }> {
+    try {
+      console.log('🎓 Training ML models...')
+      const result = await mlEngine.trainModels()
+      console.log('✅ ML model training completed:', result.accuracy)
+      return result
+    } catch (error) {
+      console.error('❌ ML model training failed:', error)
+      return { success: false, accuracy: {} }
+    }
+  }
+
+  /**
+   * Get ML model performance metrics
+   */
+  getModelMetrics(): Record<string, any> {
+    return mlEngine.getModelMetrics()
+  }
+
+  /**
+   * Update all donor profiles with latest ML insights
+   */
+  async updateAllDonorProfiles(): Promise<void> {
+    try {
+      const { data: donors } = await this.supabase
+        .from('users')
+        .select('id')
+        .not('blood_type', 'is', null)
+
+      console.log(`🔄 Updating ${donors?.length || 0} donor profiles...`)
+
+      for (const donor of donors || []) {
+        await this.updateDonorProfile(donor.id)
+      }
+
+      console.log('✅ All donor profiles updated')
+    } catch (error) {
+      console.error('❌ Error updating donor profiles:', error)
+    }
+  }
+
+  /**
+   * Analyze matching performance and suggest improvements
+   */
+  async analyzeMatchingPerformance(): Promise<{
+    totalPredictions: number
+    averageAccuracy: number
+    modelPerformance: Record<string, number>
+    recommendations: string[]
+  }> {
+    try {
+      const { data: predictions } = await this.supabase
+        .from('ml_predictions')
+        .select('*')
+        .not('actual_outcome', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1000)
+
+      const totalPredictions = predictions?.length || 0
+      const correctPredictions = predictions?.filter(p => p.prediction_accuracy === 1.0).length || 0
+      const averageAccuracy = totalPredictions > 0 ? correctPredictions / totalPredictions : 0
+
+      const modelPerformance = mlEngine.getModelMetrics()
+      
+      const recommendations: string[] = []
+      
+      if (averageAccuracy < 0.7) {
+        recommendations.push('Model accuracy is below 70%. Consider retraining with more data.')
+      }
+      
+      if (totalPredictions < 100) {
+        recommendations.push('Limited prediction history. Collect more data for better insights.')
+      }
+
+      return {
+        totalPredictions,
+        averageAccuracy,
+        modelPerformance,
+        recommendations
+      }
+
+    } catch (error) {
+      console.error('Error analyzing matching performance:', error)
+      return {
+        totalPredictions: 0,
+        averageAccuracy: 0,
+        modelPerformance: {},
+        recommendations: ['Error analyzing performance. Check system logs.']
+      }
+    }
   }
 }
 

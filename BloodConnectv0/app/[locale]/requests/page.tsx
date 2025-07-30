@@ -2,12 +2,13 @@
 
 import React, { useEffect, useState } from "react"
 import { useI18n } from "@/lib/i18n/client"
-import { MobileNav } from "@/components/mobile-nav"
+import { ResponsiveLayout } from "@/components/responsive-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { useParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
-import { Clock, MapPin, Droplet, User, Phone, AlertCircle } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Heart, Clock, AlertTriangle, CheckCircle, XCircle, MapPin, Phone, User } from "lucide-react"
 import { getBloodRequests, respondToBloodRequest } from "@/app/actions/blood-request-actions"
 import { useAuth } from "@/contexts/auth-context"
 import { toast } from "@/hooks/use-toast"
@@ -125,8 +126,7 @@ export default function RequestsPage() {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen flex-col bg-gradient-to-b from-white to-red-50 dark:from-gray-900 dark:to-gray-800">
-        <MobileNav />
+      <ResponsiveLayout>
         <div className="flex-1 p-4">
           <div className="max-w-4xl mx-auto space-y-6">
             <div className="flex items-center justify-between">
@@ -140,13 +140,12 @@ export default function RequestsPage() {
             </div>
           </div>
         </div>
-      </main>
+      </ResponsiveLayout>
     )
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-gradient-to-b from-white to-red-50 dark:from-gray-900 dark:to-gray-800">
-      <MobileNav />
+    <ResponsiveLayout>
       <div className="flex-1 p-4">
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="flex items-center justify-between">
@@ -162,7 +161,7 @@ export default function RequestsPage() {
           {bloodRequests.length === 0 ? (
             <Card>
               <CardContent className="text-center py-8">
-                <AlertCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <AlertTriangle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-semibold mb-2">No blood requests found</h3>
                 <p className="text-muted-foreground">
                   There are currently no active blood requests in your area.
@@ -176,7 +175,7 @@ export default function RequestsPage() {
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="flex items-center gap-2">
-                        <Droplet className="h-5 w-5 text-red-500" />
+                        <Heart className="h-5 w-5 text-red-500" />
                         {request.blood_type}
                       </CardTitle>
                       <div className="flex gap-2">
@@ -261,6 +260,6 @@ export default function RequestsPage() {
           )}
         </div>
       </div>
-    </main>
+    </ResponsiveLayout>
   )
 } 

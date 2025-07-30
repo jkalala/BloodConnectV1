@@ -5,6 +5,8 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useI18n } from "@/lib/i18n/client"
 import { cn } from "@/lib/utils"
+import { LanguageSwitcher } from "./language-switcher"
+import { ThemeToggle } from "./theme-toggle"
 import { 
   Home, 
   Map, 
@@ -73,12 +75,12 @@ export function MobileNav() {
     },
     {
       name: "WhatsApp",
-      href: "/whatsapp",
+      href: `/${typeof window !== 'undefined' ? window.location.pathname.split('/')[1] : 'en'}/whatsapp`,
       icon: MessageSquare,
     },
     {
       name: "USSD",
-      href: "/ussd",
+      href: `/${typeof window !== 'undefined' ? window.location.pathname.split('/')[1] : 'en'}/ussd`,
       icon: Smartphone,
     },
     {
@@ -94,27 +96,36 @@ export function MobileNav() {
   ]
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t">
-      <div className="flex justify-around">
-        {navigation.map((item) => {
-          const isActive = pathname === item.href
-          return (
-            <Link
-              key={item.name}
-              href={item.href}
-              className={cn(
-                "flex flex-col items-center justify-center py-2 px-3 text-xs transition-colors",
-                isActive
-                  ? "text-primary bg-primary/10"
-                  : "text-muted-foreground hover:text-primary"
-              )}
-            >
-              <item.icon className="h-5 w-5 mb-1" />
-              <span className="text-center leading-none">{item.name}</span>
-            </Link>
-          )
-        })}
+    <>
+      {/* Floating Controls */}
+      <div className="fixed bottom-20 right-4 z-50 flex flex-col space-y-2">
+        <ThemeToggle />
+        <LanguageSwitcher />
       </div>
-    </nav>
+      
+      {/* Mobile Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t shadow-lg">
+        <div className="flex justify-around">
+          {navigation.map((item) => {
+            const isActive = pathname === item.href
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={cn(
+                  "flex flex-col items-center justify-center py-2 px-3 text-xs transition-all duration-200 hover:scale-105",
+                  isActive
+                    ? "text-primary bg-primary/10"
+                    : "text-muted-foreground hover:text-primary"
+                )}
+              >
+                <item.icon className="h-5 w-5 mb-1" />
+                <span className="text-center leading-none">{item.name}</span>
+              </Link>
+            )
+          })}
+        </div>
+      </nav>
+    </>
   )
 }

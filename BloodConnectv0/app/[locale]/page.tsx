@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { MobileNav } from "@/components/mobile-nav"
+import { ResponsiveLayout } from "@/components/responsive-layout"
 import { Heart, Droplet, Users, Clock } from "lucide-react"
 import { useI18n } from "@/lib/i18n/client"
 import { useParams } from "next/navigation"
@@ -14,8 +14,7 @@ export default function LocalizedHome() {
 
   return (
     <main className="flex min-h-screen flex-col bg-gradient-to-b from-white to-red-50 dark:from-gray-900 dark:to-gray-800">
-      <MobileNav />
-      <div className="flex-1 p-4 flex flex-col items-center justify-center space-y-8 text-center">
+        <div className="flex-1 p-4 flex flex-col items-center justify-center space-y-8 text-center">
         <div className="space-y-4 max-w-md">
           <div className="flex justify-center">
             <div className="bg-red-100 dark:bg-red-900/30 p-4 rounded-full shadow-md">

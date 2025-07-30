@@ -1,4 +1,4 @@
-import { getSupabase } from "./supabase"
+import { createServerSupabaseClient } from "./supabase"
 
 export interface Notification {
   id: string
@@ -9,10 +9,41 @@ export interface Notification {
   data?: any
   status: string
   created_at: string
+  sent_at?: string
+  delivery_attempts?: number
+  channels?: string[]
+  priority: 'low' | 'normal' | 'high' | 'critical'
+}
+
+export interface NotificationAlert {
+  type: 'blood_request' | 'emergency' | 'donor_match' | 'status_update' | 'reminder' | 'system'
+  title: string
+  message: string
+  recipients: string[]
+  priority: 'low' | 'normal' | 'high' | 'critical'
+  channels: string[]
+  data?: Record<string, any>
+  scheduled_at?: string
+  expires_at?: string
+}
+
+export interface NotificationPreferences {
+  user_id: string
+  push_notifications: boolean
+  sms_notifications: boolean
+  email_notifications: boolean
+  whatsapp_notifications: boolean
+  call_notifications: boolean
+  emergency_only: boolean
+  quiet_hours_start?: string
+  quiet_hours_end?: string
+  blood_request_alerts: boolean
+  donation_reminders: boolean
+  system_updates: boolean
 }
 
 export class NotificationService {
-  private supabase = getSupabase()
+  private supabase = createServerSupabaseClient()
 
   /**
    * Create a notification for a user
@@ -87,98 +118,22 @@ export class NotificationService {
   }
 
   /**
-   * Send emergency alert to all compatible donors
+   * Send alert (simplified for now)
    */
-  async sendEmergencyAlert(
-    bloodType: string,
-    hospital: string,
-    location: string,
-    urgency: string
-  ): Promise<{ success: boolean; error?: string }> {
+  async sendAlert(alertData: NotificationAlert): Promise<{ success: boolean; sent: number; failed: number; error?: string }> {
     try {
-      // Get all compatible donors
-      const compatibilityMatrix: Record<string, string[]> = {
-        'O-': ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
-        'O+': ['O+', 'A+', 'B+', 'AB+'],
-        'A-': ['A-', 'A+', 'AB-', 'AB+'],
-        'A+': ['A+', 'AB+'],
-        'B-': ['B-', 'B+', 'AB-', 'AB+'],
-        'B+': ['B+', 'AB+'],
-        'AB-': ['AB-', 'AB+'],
-        'AB+': ['AB+']
-      }
-
-      const compatibleTypes = compatibilityMatrix[bloodType] || []
-
-      // Find compatible donors
-      const { data: donors, error: donorsError } = await this.supabase
-        .from('users')
-        .select('id, name, phone, blood_type, location')
-        .in('blood_type', compatibleTypes)
-        .eq('available', true)
-        .eq('receive_alerts', true)
-
-      if (donorsError) {
-        return { success: false, error: donorsError.message }
-      }
-
-      if (!donors || donors.length === 0) {
-        return { success: false, error: "No compatible donors found" }
-      }
-
-      // Create emergency notifications
-      const notifications = donors.map((donor: any) => ({
-        user_id: donor.id,
-        notification_type: 'emergency' as const,
-        title: `🚨 EMERGENCY: ${bloodType} Blood Needed`,
-        message: `URGENT: ${bloodType} blood needed at ${hospital} in ${location}. This is a ${urgency} emergency. Can you help immediately?`,
-        data: {
-          blood_type: bloodType,
-          hospital: hospital,
-          location: location,
-          urgency: urgency,
-          emergency: true
-        }
-      }))
-
-      const { error: insertError } = await this.supabase
-        .from('notification_queue')
-        .insert(notifications)
-
-      if (insertError) {
-        return { success: false, error: insertError.message }
-      }
-
-      return { success: true }
-    } catch (error: any) {
-      console.error('Error in sendEmergencyAlert:', error)
-      return { success: false, error: error.message }
-    }
-  }
-
-  /**
-   * Send blood request notification to compatible donors
-   */
-  async sendBloodRequestNotification(
-    requestId: string,
-    bloodType: string,
-    hospital: string,
-    location: string,
-    donors: Array<{ id: string; name: string; distance: number }>
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      const notifications = donors.map(donor => ({
-        user_id: donor.id,
-        notification_type: 'blood_request' as const,
-        title: `Blood Request - ${bloodType}`,
-        message: `${bloodType} blood needed at ${hospital}. Distance: ${donor.distance.toFixed(1)}km. Can you help?`,
-        data: {
-          request_id: requestId,
-          blood_type: bloodType,
-          hospital: hospital,
-          location: location,
-          distance: donor.distance
-        }
+      console.log(`📢 Sending ${alertData.type} alert to ${alertData.recipients.length} recipients`)
+      
+      // Create notifications for all recipients
+      const notifications = alertData.recipients.map(recipient => ({
+        user_id: recipient,
+        notification_type: alertData.type,
+        title: alertData.title,
+        message: alertData.message,
+        data: alertData.data || {},
+        priority: alertData.priority,
+        channels: alertData.channels,
+        status: 'pending'
       }))
 
       const { error } = await this.supabase
@@ -186,113 +141,21 @@ export class NotificationService {
         .insert(notifications)
 
       if (error) {
-        return { success: false, error: error.message }
+        console.error('Error sending alert:', error)
+        return { success: false, sent: 0, failed: alertData.recipients.length, error: error.message }
       }
 
-      return { success: true }
+      return { success: true, sent: alertData.recipients.length, failed: 0 }
     } catch (error: any) {
-      console.error('Error in sendBloodRequestNotification:', error)
-      return { success: false, error: error.message }
+      console.error('Error in sendAlert:', error)
+      return { success: false, sent: 0, failed: 0, error: error.message }
     }
   }
 
   /**
-   * Send donor match notification
+   * Process pending notifications (simplified)
    */
-  async sendDonorMatchNotification(
-    requestId: string,
-    donorId: string,
-    donorName: string,
-    bloodType: string,
-    hospital: string
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      // Get the request creator's user ID
-      const { data: request } = await this.supabase
-        .from('blood_requests')
-        .select('contact_phone')
-        .eq('id', requestId)
-        .single()
-
-      if (!request) {
-        return { success: false, error: "Request not found" }
-      }
-
-      // Find the user by phone number
-      const { data: user } = await this.supabase
-        .from('users')
-        .select('id')
-        .eq('phone', request.contact_phone)
-        .single()
-
-      if (!user) {
-        return { success: false, error: "Request creator not found" }
-      }
-
-      const notification = {
-        user_id: user.id,
-        notification_type: 'donor_match' as const,
-        title: 'Donor Found! 🎉',
-        message: `${donorName} has accepted your blood request for ${bloodType} at ${hospital}`,
-        data: {
-          request_id: requestId,
-          donor_id: donorId,
-          donor_name: donorName,
-          blood_type: bloodType,
-          hospital: hospital
-        }
-      }
-
-      const { error } = await this.supabase
-        .from('notification_queue')
-        .insert(notification)
-
-      if (error) {
-        return { success: false, error: error.message }
-      }
-
-      return { success: true }
-    } catch (error: any) {
-      console.error('Error in sendDonorMatchNotification:', error)
-      return { success: false, error: error.message }
-    }
-  }
-
-  /**
-   * Send donation reminder
-   */
-  async sendDonationReminder(userId: string, userName: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      const notification = {
-        user_id: userId,
-        notification_type: 'reminder' as const,
-        title: 'Donation Reminder 💝',
-        message: `Hi ${userName}, you're eligible to donate blood again! Your donation can save up to 3 lives.`,
-        data: {
-          type: 'donation_reminder',
-          message: 'You can donate again'
-        }
-      }
-
-      const { error } = await this.supabase
-        .from('notification_queue')
-        .insert(notification)
-
-      if (error) {
-        return { success: false, error: error.message }
-      }
-
-      return { success: true }
-    } catch (error: any) {
-      console.error('Error in sendDonationReminder:', error)
-      return { success: false, error: error.message }
-    }
-  }
-
-  /**
-   * Process pending notifications (this would be called by a background job)
-   */
-  async processPendingNotifications(): Promise<{ success: boolean; processed: number; error?: string }> {
+  async processPendingNotifications(): Promise<{ success: boolean; processed: number; retried: number; error?: string }> {
     try {
       // Get pending notifications
       const { data: notifications, error: fetchError } = await this.supabase
@@ -303,18 +166,17 @@ export class NotificationService {
         .limit(100)
 
       if (fetchError) {
-        return { success: false, processed: 0, error: fetchError.message }
+        return { success: false, processed: 0, retried: 0, error: fetchError.message }
       }
 
       if (!notifications || notifications.length === 0) {
-        return { success: true, processed: 0 }
+        return { success: true, processed: 0, retried: 0 }
       }
 
       let processed = 0
       for (const notification of notifications) {
         try {
-          // Here you would integrate with actual push notification service
-          // For now, we'll just mark them as sent
+          // Mark as sent (simplified processing)
           const { error: updateError } = await this.supabase
             .from('notification_queue')
             .update({ 
@@ -331,13 +193,111 @@ export class NotificationService {
         }
       }
 
-      return { success: true, processed }
+      return { success: true, processed, retried: 0 }
     } catch (error: any) {
       console.error('Error in processPendingNotifications:', error)
-      return { success: false, processed: 0, error: error.message }
+      return { success: false, processed: 0, retried: 0, error: error.message }
+    }
+  }
+
+  /**
+   * Update user notification preferences
+   */
+  async updateNotificationPreferences(
+    userId: string,
+    preferences: Partial<NotificationPreferences>
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { error } = await this.supabase
+        .from('user_profiles')
+        .update({
+          notification_preferences: preferences
+        })
+        .eq('user_id', userId)
+      
+      if (error) {
+        return { success: false, error: error.message }
+      }
+      
+      return { success: true }
+    } catch (error: any) {
+      console.error('Error updating notification preferences:', error)
+      return { success: false, error: error.message }
+    }
+  }
+  
+  /**
+   * Get user notification preferences
+   */
+  async getNotificationPreferences(
+    userId: string
+  ): Promise<{ success: boolean; data?: NotificationPreferences; error?: string }> {
+    try {
+      const { data, error } = await this.supabase
+        .from('user_profiles')
+        .select('notification_preferences')
+        .eq('user_id', userId)
+        .single()
+      
+      if (error) {
+        return { success: false, error: error.message }
+      }
+      
+      return { success: true, data: data?.notification_preferences }
+    } catch (error: any) {
+      console.error('Error getting notification preferences:', error)
+      return { success: false, error: error.message }
+    }
+  }
+  
+  /**
+   * Get notification statistics
+   */
+  async getNotificationStats(
+    userId?: string,
+    days: number = 30
+  ): Promise<{ success: boolean; data?: any; error?: string }> {
+    try {
+      let query = this.supabase
+        .from('notification_queue')
+        .select('status, notification_type, priority, created_at')
+        .gte('created_at', new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString())
+      
+      if (userId) {
+        query = query.eq('user_id', userId)
+      }
+      
+      const { data, error } = await query
+      
+      if (error) {
+        return { success: false, error: error.message }
+      }
+      
+      // Calculate basic statistics
+      const stats = {
+        total_sent: data?.filter(n => n.status === 'sent').length || 0,
+        total_failed: data?.filter(n => n.status === 'failed').length || 0,
+        total_pending: data?.filter(n => n.status === 'pending').length || 0,
+        by_type: {},
+        by_priority: {},
+        by_channel: {},
+        success_rate: 0
+      }
+      
+      if (data && data.length > 0) {
+        stats.success_rate = (stats.total_sent / data.length) * 100
+      }
+      
+      return { success: true, data: stats }
+    } catch (error: any) {
+      console.error('Error getting notification stats:', error)
+      return { success: false, error: error.message }
     }
   }
 }
 
 // Export singleton instance
-export const notificationService = new NotificationService() 
+export const notificationService = new NotificationService()
+
+// Export getter function for consistency with other services
+export const getNotificationService = () => notificationService

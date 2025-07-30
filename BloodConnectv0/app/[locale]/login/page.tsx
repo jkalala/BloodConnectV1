@@ -3,23 +3,18 @@
 import type React from "react"
 import { useState } from "react"
 import Link from "next/link"
-import { useRouter, useParams } from "next/navigation"
-import { MobileNav } from "@/components/mobile-nav"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/hooks/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { useAuth } from "@/contexts/auth-context"
-import { useI18n } from "@/lib/i18n/client"
+import { getSupabase } from "@/lib/supabase"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { Heart, Lock, Phone, ArrowRight } from "lucide-react"
 
 export default function LoginPage() {
   const router = useRouter()
-  const params = useParams()
-  const locale = params.locale as string
-  const { signIn } = useAuth()
-  const t = useI18n()
   const [isLoading, setIsLoading] = useState(false)
   const [formData, setFormData] = useState({
     phone: "",
@@ -34,27 +29,31 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
+    const supabase = getSupabase()
 
     try {
-      const { error } = await signIn(formData.phone, formData.password)
+      // For Supabase auth, we need to use email, so we'll construct one from the phone
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: `${formData.phone}@bloodlink.app`,
+        password: formData.password,
+      })
 
       if (error) {
         throw error
       }
 
       toast({
-        title: t("auth.signIn"),
-        description: t("auth.welcomeBack"),
+        title: "Login successful!",
+        description: "Welcome back to BloodLink.",
       })
 
-      // Redirect to localized dashboard
       setTimeout(() => {
-        router.push(`/${locale}/dashboard`)
+        router.push("/dashboard")
       }, 1000)
     } catch (error: any) {
       toast({
-        title: t("errors.registrationFailed"),
-        description: error.message || t("errors.checkInfoAndTryAgain"),
+        title: "Login failed",
+        description: error.message || "Please check your credentials and try again.",
         variant: "destructive",
       })
     } finally {
@@ -64,7 +63,10 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen flex-col bg-gradient-to-b from-white to-red-50 dark:from-gray-900 dark:to-gray-800">
-      <MobileNav />
+      {/* Floating Theme Toggle */}
+      <div className="fixed top-4 right-4 z-50">
+        <ThemeToggle />
+      </div>
       <div className="flex-1 p-4 flex items-center justify-center">
         <div className="w-full max-w-md space-y-8">
           <div className="text-center">
@@ -73,15 +75,15 @@ export default function LoginPage() {
                 <Heart className="h-8 w-8 text-red-600 dark:text-red-400" />
               </div>
             </div>
-            <h1 className="text-3xl font-bold tracking-tight">{t("auth.welcomeBack")}</h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-2">{t("auth.signIn")}</p>
+            <h1 className="text-3xl font-bold tracking-tight">Welcome Back</h1>
+            <p className="text-gray-600 dark:text-gray-400 mt-2">Sign in to continue saving lives</p>
           </div>
 
           <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">
                 <Label htmlFor="phone" className="text-sm font-medium">
-                  {t("auth.phoneNumber")}
+                  Phone Number
                 </Label>
                 <div className="relative">
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -100,10 +102,10 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="password" className="text-sm font-medium">
-                    {t("auth.password")}
+                    Password
                   </Label>
-                  <Link href={`/${locale}/forgot-password`} className="text-xs text-red-700 dark:text-red-400 hover:underline">
-                    {t("auth.forgotPassword")}
+                  <Link href="/forgot-password" className="text-xs text-red-700 dark:text-red-400 hover:underline">
+                    Forgot password?
                   </Link>
                 </div>
                 <div className="relative">
@@ -126,10 +128,10 @@ export default function LoginPage() {
                 disabled={isLoading}
               >
                 {isLoading ? (
-                  t("common.loading")
+                  "Signing in..."
                 ) : (
                   <>
-                    {t("auth.signIn")} <ArrowRight className="ml-2 h-4 w-4" />
+                    Sign In <ArrowRight className="ml-2 h-4 w-4" />
                   </>
                 )}
               </Button>
@@ -138,9 +140,9 @@ export default function LoginPage() {
 
           <div className="text-center">
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              {t("auth.registerDonor")}{" "}
-              <Link href={`/${locale}/register`} className="text-red-700 dark:text-red-400 font-medium hover:underline">
-                {t("auth.register")}
+              Don't have an account?{" "}
+              <Link href="/register" className="text-red-700 dark:text-red-400 font-medium hover:underline">
+                Register now
               </Link>
             </p>
           </div>
@@ -151,9 +153,9 @@ export default function LoginPage() {
                 <Heart className="h-4 w-4 text-red-600 dark:text-red-400" />
               </div>
               <div className="text-sm">
-                <p className="font-medium">{t("auth.joinNetwork")}</p>
+                <p className="font-medium">Every donation counts</p>
                 <p className="text-gray-600 dark:text-gray-400 mt-1">
-                  {t("app.description")}
+                  Your contribution can save up to 3 lives. Join our community of donors today.
                 </p>
               </div>
             </div>

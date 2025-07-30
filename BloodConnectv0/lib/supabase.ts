@@ -1,34 +1,59 @@
 import { createClient } from "@supabase/supabase-js"
 import type { Database } from "../types/supabase"
+import { getEnvironmentConfig } from "./env-validation"
 
-// Create a single supabase client for the browser
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://lglquyksommwynrhmkvz.supabase.co"
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxnbHF1eWtzb21td3lucmhta3Z6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4MDY2NzgsImV4cCI6MjA2NTM4MjY3OH0.9qoIqjYI4p9xxx2nhiDFBG3yRHc-4sQ-bTeuuAW2X3E"
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error("Missing Supabase credentials:", { 
-    hasUrl: !!supabaseUrl, 
-    hasKey: !!supabaseAnonKey 
-  })
-  throw new Error("Missing Supabase credentials")
-}
+// Get validated environment configuration
+const { NEXT_PUBLIC_SUPABASE_URL: supabaseUrl, NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey } = getEnvironmentConfig()
 
 // Create a singleton instance for client-side usage
 let supabaseInstance: ReturnType<typeof createClient<Database>> | null = null
+
+interface SupabaseOptions {
+  auth?: {
+    persistSession?: boolean
+  }
+}
+
+const createSupabaseClient = (options: SupabaseOptions = {}) => {
+  return createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: 'pkce',
+      persistSession: options.auth?.persistSession ?? true
+    },
+    global: {
+      headers: {
+        'x-client-info': 'bloodlink-africa',
+        'Content-Type': 'application/json'
+      }
+    },
+    db: {
+      schema: 'public'
+    },
+    realtime: {
+      params: {
+        eventsPerSecond: 10
+      }
+    }
+  })
+}
 
 export const getSupabase = () => {
   try {
     if (typeof window === "undefined") {
       // Server-side - create a new instance
       console.log("Creating server-side Supabase client")
-      return createClient<Database>(supabaseUrl, supabaseAnonKey, {
-        auth: { persistSession: false },
+      return createSupabaseClient({ 
+        auth: { persistSession: false }
       })
     }
 
     if (!supabaseInstance) {
       console.log("Creating client-side Supabase instance")
-      supabaseInstance = createClient<Database>(supabaseUrl, supabaseAnonKey)
+      supabaseInstance = createSupabaseClient({
+        auth: { persistSession: true }
+      })
     }
     return supabaseInstance
   } catch (error) {
@@ -41,10 +66,8 @@ export const getSupabase = () => {
 export const createServerSupabaseClient = () => {
   try {
     console.log("Creating server component Supabase client")
-    return createClient<Database>(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: false,
-      },
+    return createSupabaseClient({
+      auth: { persistSession: false }
     })
   } catch (error) {
     console.error("Error creating server Supabase client:", error)

@@ -1,14 +1,14 @@
 "use client"
 
-import { useI18n } from "@/lib/i18n/client"
-import { MobileNav } from "@/components/mobile-nav"
+import { ResponsiveLayout } from "@/components/responsive-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { useParams } from "next/navigation"
+import { Badge } from "@/components/ui/badge"
 import { Calendar } from "@/components/ui/calendar"
+import { Calendar as CalendarIcon, Clock, MapPin, Heart, Users, AlertTriangle } from "lucide-react"
+import { useParams } from "next/navigation"
 import { useState } from "react"
 import { format } from "date-fns"
-import { Calendar as CalendarIcon, Clock } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -29,7 +29,6 @@ const locations = [
 ]
 
 export default function SchedulePage() {
-  const t = useI18n()
   const params = useParams()
   const locale = params.locale as string
   const [date, setDate] = useState<Date>()
@@ -43,8 +42,7 @@ export default function SchedulePage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-gradient-to-b from-white to-red-50 dark:from-gray-900 dark:to-gray-800">
-      <MobileNav />
+    <ResponsiveLayout>
       <div className="flex-1 p-4">
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="flex items-center justify-between">
@@ -132,6 +130,6 @@ export default function SchedulePage() {
           </div>
         </div>
       </div>
-    </main>
+    </ResponsiveLayout>
   )
 } 

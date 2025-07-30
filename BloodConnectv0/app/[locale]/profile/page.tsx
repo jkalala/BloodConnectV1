@@ -1,35 +1,58 @@
 "use client"
 
 import { useI18n } from "@/lib/i18n/client"
-import { MobileNav } from "@/components/mobile-nav"
+import { useAuth } from "@/contexts/auth-context"
+import { ResponsiveLayout } from "@/components/responsive-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { useParams } from "next/navigation"
-import { useAuth } from "@/contexts/auth-context"
+import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
+import { Heart, MapPin, Calendar, Award, Shield, Bell, Settings } from "lucide-react"
+import { useState } from "react"
+import { toast } from "@/hooks/use-toast"
 
 export default function ProfilePage() {
   const t = useI18n()
-  const params = useParams()
-  const locale = params.locale as string
-  const { user } = useAuth()
+  const { user, setUser } = useAuth() // setUser may need to be exposed in useAuth
+  const [name, setName] = useState(user?.name || "")
+  const [address, setAddress] = useState(user?.location || "")
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/profile/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, address }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        toast({ title: "Profile updated!" })
+        setUser && setUser(data.user)
+      } else {
+        toast({ title: "Failed to update", description: data.error, variant: "destructive" })
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" })
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const userProfile = {
-    name: user?.user_metadata?.name || "Donor",
-    email: user?.email || "email@example.com",
-    bloodType: "O+",
-    lastDonation: "2024-02-15",
-    totalDonations: 5,
-    phone: "+1234567890",
-    address: "123 Main St, City"
+    name: user?.name || "Donor",
+    bloodType: user?.blood_type || "Unknown",
+    lastDonation: user?.last_donation || "N/A",
+    phone: user?.phone || "",
+    address: user?.location || ""
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-gradient-to-b from-white to-red-50 dark:from-gray-900 dark:to-gray-800">
-      <MobileNav />
+    <ResponsiveLayout>
       <div className="flex-1 p-4">
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="flex items-center justify-between">
@@ -44,12 +67,12 @@ export default function ProfilePage() {
               <CardHeader>
                 <div className="flex items-center gap-4">
                   <Avatar className="h-20 w-20">
-                    <AvatarImage src={user?.user_metadata?.avatar_url} />
+                    {/* AvatarImage can be updated if you add avatar_url to your user model */}
                     <AvatarFallback>{userProfile.name[0]}</AvatarFallback>
                   </Avatar>
                   <div>
                     <CardTitle>{userProfile.name}</CardTitle>
-                    <CardDescription>{userProfile.email}</CardDescription>
+                    <CardDescription>{userProfile.bloodType}</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -57,31 +80,37 @@ export default function ProfilePage() {
                 <div className="grid gap-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Blood Type</Label>
-                      <Input value={userProfile.bloodType} disabled />
+                      <Label>Name</Label>
+                      <Input value={name} onChange={e => setName(e.target.value)} />
                     </div>
                     <div className="space-y-2">
-                      <Label>Last Donation</Label>
-                      <Input value={userProfile.lastDonation} disabled />
+                      <Label>Blood Type</Label>
+                      <Input value={userProfile.bloodType} disabled />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
+                      <Label>Last Donation</Label>
+                      <Input value={userProfile.lastDonation} disabled />
+                    </div>
+                    <div className="space-y-2">
                       <Label>Phone</Label>
                       <Input value={userProfile.phone} readOnly />
                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Address</Label>
-                      <Input value={userProfile.address} />
+                      <Input value={address} onChange={e => setAddress(e.target.value)} />
                     </div>
                   </div>
                   <Separator />
                   <div className="flex justify-between items-center">
                     <div>
                       <p className="text-sm font-medium">Total Donations</p>
-                      <p className="text-2xl font-bold">{userProfile.totalDonations}</p>
+                      {/* You can add total donations if you add it to your user model */}
                     </div>
-                    <Button>Update Profile</Button>
+                    <Button onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Update Profile"}</Button>
                   </div>
                 </div>
               </CardContent>
@@ -89,6 +118,11 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
-    </main>
+      {/* Debug section for raw user object */}
+      <div className="mt-8">
+        <h2 className="font-semibold mb-2">Debug: Raw User Object</h2>
+        <pre className="bg-white p-2 rounded border text-xs overflow-x-auto">{JSON.stringify(user, null, 2)}</pre>
+      </div>
+    </ResponsiveLayout>
   )
 } 

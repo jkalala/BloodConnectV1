@@ -35,13 +35,27 @@ export class WebSocketService {
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
+  private isInitializing = false
+  private isInitialized = false
 
   constructor() {
-    this.initializeRealtime()
+    // Don't auto-initialize in constructor
   }
 
-  private async initializeRealtime() {
+  public async initialize() {
+    if (this.isInitialized || this.isInitializing) {
+      return
+    }
+
+    this.isInitializing = true
+    
     try {
+      // Clean up any existing channel
+      if (this.channel) {
+        this.supabase.removeChannel(this.channel)
+        this.channel = null
+      }
+
       // Subscribe to real-time events
       this.channel = this.supabase
         .channel('bloodlink-realtime')
@@ -103,6 +117,8 @@ export class WebSocketService {
         .subscribe((status: string) => {
           console.log('WebSocket connection status:', status)
           this.isConnected = status === 'SUBSCRIBED'
+          this.isInitialized = true
+          this.isInitializing = false
           
           if (this.isConnected) {
             this.reconnectAttempts = 0
@@ -114,18 +130,20 @@ export class WebSocketService {
 
     } catch (error) {
       console.error('Error initializing WebSocket:', error)
+      this.isInitializing = false
       this.handleDisconnection()
     }
   }
 
   private handleDisconnection() {
     this.isConnected = false
+    this.isInitialized = false
     this.notifyListeners('connection', { type: 'disconnected', data: {}, timestamp: new Date().toISOString() })
     
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       setTimeout(() => {
         this.reconnectAttempts++
-        this.initializeRealtime()
+        this.initialize()
       }, this.reconnectDelay * this.reconnectAttempts)
     }
   }
@@ -254,6 +272,10 @@ export class WebSocketService {
     }
   }
 
+  public async broadcast(eventType: string, data: any) {
+    return this.sendEvent(eventType, data)
+  }
+
   public isConnectedToServer(): boolean {
     return this.isConnected
   }
@@ -264,16 +286,21 @@ export class WebSocketService {
       this.channel = null
     }
     this.isConnected = false
+    this.isInitialized = false
+    this.isInitializing = false
     this.listeners.clear()
   }
 }
 
 // Singleton instance
-let websocketService: WebSocketService | null = null
+let websocketServiceInstance: WebSocketService | null = null
 
 export const getWebSocketService = (): WebSocketService => {
-  if (!websocketService) {
-    websocketService = new WebSocketService()
+  if (!websocketServiceInstance) {
+    websocketServiceInstance = new WebSocketService()
   }
-  return websocketService
-} 
+  return websocketServiceInstance
+}
+
+// Export singleton instance for direct imports
+export const websocketService = getWebSocketService() 

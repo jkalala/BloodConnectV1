@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from "react"
-import { MobileNav } from "@/components/mobile-nav"
+import { ResponsiveLayout } from "@/components/responsive-layout"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -30,6 +30,7 @@ import { getWebSocketService, type WebSocketMessage } from "@/lib/websocket-serv
 import { getPushNotificationService } from "@/lib/push-notification-service"
 import { getBloodRequestService } from "@/lib/blood-request-service"
 import { getNotificationService } from "@/lib/notification-service"
+import { getSupabase } from "@/lib/supabase"
 
 interface RealTimeStats {
   activeRequests: number
@@ -86,6 +87,9 @@ export default function RealTimeDashboardPage() {
 
   const initializeRealTimeFeatures = async () => {
     try {
+      // Initialize WebSocket service
+      await websocketService.initialize()
+      
       // Check WebSocket connection
       setIsWebSocketConnected(websocketService.isConnectedToServer())
 
@@ -320,29 +324,30 @@ export default function RealTimeDashboardPage() {
   if (isLoading) {
     return (
       <ProtectedRoute>
-        <main className="flex min-h-screen flex-col">
-          <MobileNav />
-          <div className="flex-1 p-4">
-            <div className="animate-pulse space-y-4">
-              <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {[...Array(4)].map((_, i) => (
-                  <div key={i} className="h-32 bg-gray-200 rounded"></div>
-                ))}
+        <ResponsiveLayout>
+          <main className="flex min-h-screen flex-col">
+            <div className="flex-1 p-4">
+              <div className="animate-pulse space-y-4">
+                <div className="h-8 bg-gray-200 rounded w-1/4"></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} className="h-32 bg-gray-200 rounded"></div>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        </main>
+          </main>
+        </ResponsiveLayout>
       </ProtectedRoute>
     )
   }
 
   return (
     <ProtectedRoute>
-      <main className="flex min-h-screen flex-col">
-        <MobileNav />
-        <div className="flex-1 p-4">
-          <div className="max-w-7xl mx-auto space-y-6">
+      <ResponsiveLayout>
+        <main className="flex min-h-screen flex-col">
+          <div className="flex-1 p-4">
+            <div className="max-w-7xl mx-auto space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between">
               <div>
@@ -619,6 +624,7 @@ export default function RealTimeDashboardPage() {
         </div>
         <Toaster />
       </main>
+    </ResponsiveLayout>
     </ProtectedRoute>
   )
 } 

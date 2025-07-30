@@ -340,11 +340,19 @@ export class BloodRequestService {
         }
       }
 
-      // Update request response count
-      await this.supabase
+      // Get current response count and increment
+      const { data: currentRequest } = await this.supabase
         .from('blood_requests')
-        .update({ response_count: this.supabase.sql`response_count + 1` })
+        .select('response_count')
         .eq('id', requestId)
+        .single()
+
+      if (currentRequest) {
+        await this.supabase
+          .from('blood_requests')
+          .update({ response_count: (currentRequest.response_count || 0) + 1 })
+          .eq('id', requestId)
+      }
 
       // If accepted, try to match immediately
       if (responseType === 'accept') {
@@ -561,4 +569,7 @@ export class BloodRequestService {
 }
 
 // Export singleton instance
-export const bloodRequestService = new BloodRequestService() 
+export const bloodRequestService = new BloodRequestService()
+
+// Export getter function for consistency with other services
+export const getBloodRequestService = () => bloodRequestService 

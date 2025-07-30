@@ -1,8 +1,9 @@
 "use client"
 
-import { useI18n } from "@/lib/i18n/client"
-import { MobileNav } from "@/components/mobile-nav"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { ResponsiveLayout } from "@/components/responsive-layout"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Calendar, MapPin, Heart, Award } from "lucide-react"
 import { useParams } from "next/navigation"
 import {
   Table,
@@ -14,7 +15,6 @@ import {
 } from "@/components/ui/table"
 
 export default function HistoryPage() {
-  const t = useI18n()
   const params = useParams()
   const locale = params.locale as string
 
@@ -31,20 +31,20 @@ export default function HistoryPage() {
   ]
 
   return (
-    <main className="flex min-h-screen flex-col bg-gradient-to-b from-white to-red-50 dark:from-gray-900 dark:to-gray-800">
-      <MobileNav />
+    <ResponsiveLayout>
       <div className="flex-1 p-4">
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold">{t("dashboard.donationHistory")}</h1>
-              <p className="text-muted-foreground">{t("dashboard.donationHistoryDesc")}</p>
+              <h1 className="text-2xl font-bold">Your Donation History</h1>
+              <p className="text-muted-foreground">Your donation history will be displayed here.</p>
             </div>
           </div>
 
           <Card>
             <CardHeader>
               <CardTitle>Your Donation History</CardTitle>
+              <CardDescription>Track your past blood donations.</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -71,6 +71,6 @@ export default function HistoryPage() {
           </Card>
         </div>
       </div>
-    </main>
+    </ResponsiveLayout>
   )
 } 
